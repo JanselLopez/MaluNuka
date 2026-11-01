@@ -1,0 +1,12 @@
+MALU Y NUKA · versión web
+
+Esta carpeta contiene el juego y sus recursos. Puedes publicarla como sitio estático.
+
+GitHub Pages
+1. Sube el proyecto completo a un repositorio de GitHub con una rama main.
+2. En Settings > Pages, elige GitHub Actions como fuente de publicación.
+3. Al hacer push a main, la acción publica esta carpeta automáticamente.
+
+También puedes alojar index.html, fonts/ y lib/ juntos en cualquier hosting estático.
+Los avisos de licencia de PeerJS y las fuentes están incluidos junto a esos recursos.
+El modo en línea conecta los teléfonos por WebRTC y necesita internet.

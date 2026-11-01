@@ -1,0 +1,12 @@
+node_modules/
+mobile/node_modules/
+mobile/android/
+mobile/ios/
+mobile/.expo/
+mobile/assets/icon.png
+mobile/src/levels.json
+mobile/src/game-engine.js
+*.keystore
+*.jks
+*.log
+firma/

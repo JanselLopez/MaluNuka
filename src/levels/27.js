@@ -1,0 +1,28 @@
+// Nivel 27. Bola a 90 px/s tras 2.5 s (ellos corren a 112). Escalón, foso con picos, botón 1 con tiempo (2.5 s) para la puerta a, muro de 3 con botón 2 arriba (uno se sube a la cabeza del otro) que abre b abajo, hielo resbaloso, bandera, botón pesado 6 (los dos, 2 s) para c, escalones y picos (bajar al tramo de 2 y saltar).
+LEVELS.push({
+  world: 7,
+  name: "¡Corran!",
+  ball: {"speed":90,"delay":2.5},
+  timers: {"1":2.5,"3":2},
+  hint: "¡Viene una bola de nieve gigante! No se detengan.",
+  rows: [
+    "####################################################################################################",
+    "#                           #     ##                                      #                        #",
+    "#                           #     ##                                      #                        #",
+    "#                           #     ##                                      #                        #",
+    "#                           #     ##                                      #                        #",
+    "#                           #     ##                                      #                        #",
+    "#                           #     ##                                      #                        #",
+    "#                           #     ##                                      #                        #",
+    "#                           #     ##                                      #                        #",
+    "#                           #                                             #                        #",
+    "#                           #                                             #          *             #",
+    "#                           #                                             #                        #",
+    "#                           a *   2                                       c                        #",
+    "#                           a     ##              *                       c         ##             #",
+    "#         ##                a     ##                                      c     ##  ##             #",
+    "# FB      ##            1   a     bb                            !     6   c     ##  ##          E  #",
+    "##################^^^#####################-------------------###########################^^^#########",
+    "####################################################################################################",
+  ],
+});

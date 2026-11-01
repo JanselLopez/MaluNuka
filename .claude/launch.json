@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "juego-local",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["servidor.js", "5321"],
+      "port": 5321,
+      "autoPort": false
+    }
+  ]
+}

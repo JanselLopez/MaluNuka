@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Malu y Nuka",
+    "slug": "malu-y-nuka",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
+    "plugins": [
+      [
+        "expo-screen-orientation",
+        { "initialOrientation": "PORTRAIT" }
+      ],
+      "@config-plugins/react-native-webrtc",
+      "./plugins/with-data-only-webrtc"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "requireFullScreen": true,
+      "bundleIdentifier": "com.maluynuka.app"
+    },
+    "android": {
+      "package": "com.maluynuka.app",
+      "softwareKeyboardLayoutMode": "pan",
+      "blockedPermissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.BLUETOOTH"
+      ]
+    }
+  }
+}

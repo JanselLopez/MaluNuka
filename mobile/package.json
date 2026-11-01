@@ -1,0 +1,28 @@
+{
+  "name": "malu-y-nuka-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "postinstall": "node scripts/patch-react-native-peer.js",
+    "start": "expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "prebuild": "expo prebuild"
+  },
+  "dependencies": {
+    "expo": "~56.0.0",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "expo-screen-orientation": "~56.0.5",
+    "react-native-svg": "15.15.4",
+    "expo-dev-client": "~56.0.28",
+    "react-native-peer": "^1.1.0",
+    "react-native-webrtc": "124.0.7",
+    "@config-plugins/react-native-webrtc": "15.0.2"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "typescript": "~5.9.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "malu-y-nuka-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Versión web estática del juego cooperativo Malu y Nuka.",
+  "scripts": {
+    "build": "node build.js",
+    "web": "node servidor.js 5320",
+    "mobile:install": "npm --prefix mobile install",
+    "mobile:start": "npm run build && npm --prefix mobile start",
+    "mobile:android": "npm run build && npm --prefix mobile run android",
+    "mobile:ios": "npm run build && npm --prefix mobile run ios"
+  },
+  "dependencies": {
+    "@fontsource/fredoka": "^5.3.0",
+    "@fontsource/nunito": "^5.3.0",
+    "peerjs": "^1.5.4"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.11"
+  }
+}

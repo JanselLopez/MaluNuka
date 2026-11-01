@@ -1,0 +1,28 @@
+// Nivel 22. Entran por el hoyo izquierdo. Puerta a (col 16) con un botón 1 a cada lado, cada uno junto a burbujas. Salen por el hoyo derecho.
+LEVELS.push({
+  world: 6,
+  name: "Bajo el hielo",
+  air: true,
+  waterline: 5,
+  hint: "Mantén Agarrar para bucear. Las burbujas dan aire.",
+  rows: [
+    "################################",
+    "#             ###              #",
+    "#             ###              #",
+    "# FB          ###           E  #",
+    "#####  #################  ######",
+    "#               #              #",
+    "# *             #            * #",
+    "#               #              #",
+    "#               #######  #######",
+    "#######  #####  #              #",
+    "#               #              #",
+    "#  ######       #              #",
+    "#  #    #       a              #",
+    "#  # *  #       a              #",
+    "#  #    #       a              #",
+    "#               #           *  #",
+    "#          1q   #  q1          #",
+    "################################",
+  ],
+});
