@@ -42,6 +42,8 @@ El modo en línea requiere conexión a internet y un sitio servido por HTTPS, co
 
 Los archivos fuente del juego están en `src/`. Para añadir o ajustar niveles, consulta `src/levels/` y `src/pistas.js`. Los archivos HTML, JavaScript y recursos estáticos listos para alojar se generan con `build.js`.
 
+La monetización se controla con `MONETIZATION_ENABLED` en `src/08-monetizacion.js`; está en `false` por defecto, así que no aparecen anuncios ni la opción de pago.
+
 ```text
 src/                    Interfaz web, motor, controles y niveles
 publicar/               Sitio estático generado para GitHub Pages

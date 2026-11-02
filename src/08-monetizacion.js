@@ -2,17 +2,20 @@
 // Un solo aviso con dos caminos: ver un anuncio corto (con recompensa) o pagar una vez y no ver anuncios nunca más.
 // Aparece al entrar por primera vez en la sesión al primer nivel de los mundos 2 a 7, y la primera vez que eligen
 // una pareja (que no sea la de pingüinos). En línea solo lo ve quien elige el nivel.
+// Déjalo en false para jugar sin anuncios ni compras. Cambiar a true para activar la monetización.
+const MONETIZATION_ENABLED = false;
 store.adPairs = store.adPairs || {};
 const Monet = {
   worldSeen: {}, price: "US$1.99", busy: false,
   get noAds() { return !!store.noAds; },
   // ¿hace falta el aviso para entrar a este nivel?
   worldNeedsAd(i) {
+    if (!MONETIZATION_ENABLED) return false;
     const lv = LEVELS[i];
     if (!lv || this.noAds || lv.world < 2 || this.worldSeen[lv.world]) return false;
     return i === 0 || LEVELS[i - 1].world !== lv.world; // primer nivel del mundo
   },
-  pairNeedsAd(id) { return !this.noAds && id !== "pinguinos" && isUnlocked(id) && !store.adPairs[id]; },
+  pairNeedsAd(id) { return MONETIZATION_ENABLED && !this.noAds && id !== "pinguinos" && isUnlocked(id) && !store.adPairs[id]; },
 };
 
 // ---------- el aviso ----------
@@ -114,7 +117,9 @@ $("gateRestore").onclick = async () => {
   if (ok) { setNoAds(); closeGate(true); } else gateMessage("No encontramos una compra anterior con esta cuenta.");
 };
 $("gateCancel").onclick = () => closeGate(false);
-$("btnNoAds").onclick = () => { unlockAudio(); openGate({ kind: "shop" }); };
-$("btnNoAds").hidden = Monet.noAds;
-Ads.start();
+$("btnNoAds").hidden = !MONETIZATION_ENABLED || Monet.noAds;
+if (MONETIZATION_ENABLED) {
+  $("btnNoAds").onclick = () => { unlockAudio(); openGate({ kind: "shop" }); };
+  Ads.start();
+}
 // si ya habían comprado en otro teléfono con la misma cuenta, se recupera solo al abrir
