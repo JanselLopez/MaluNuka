@@ -239,21 +239,37 @@ function paintLobby() {
 }
 
 // ---------- Cámara y dibujo ----------
+// En pantallas chicas la cámara se acerca a los pingüinos y se aleja solo lo necesario para que se vean los dos.
 function updateCamera(dt, snap) {
   const L = S.L;
   if (!L) return;
   const ps = allPengs().filter((p) => p.visible && !p.dead);
-  if (!ps.length) return;
-  const k = snap ? 1 : Math.min(1, dt * 5);
-  if (L.H <= H) S.camY = 0;
+  const near = S.screen === "play" || S.screen === "pause" || S.screen === "win" ? view.max : view.fit;
+  if (ps.length) {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const p of ps) {
+      // altura de referencia: el último piso que pisó, así la cámara no sube y baja con cada salto
+      p.camRef = snap || p.camRef == null || p.onGround || p.wet || p.cling ? p.y : Math.min(Math.max(p.camRef, p.y), p.y + 3 * T);
+      x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x + PW);
+      y0 = Math.min(y0, p.camRef - 3.5 * T, p.y - T); y1 = Math.max(y1, p.camRef + PH + 1.5 * T);
+    }
+    const want = Math.max(view.fit, Math.min(near, view.aw / (x1 - x0 + 8 * T), view.fh / (y1 - y0)));
+    // alejarse es rápido para no perder a nadie; acercarse, suave
+    view.s = snap ? want : view.s + (want - view.s) * Math.min(1, dt * (want < view.s ? 3 : 1.2));
+    S.camTx = (x0 + x1) / 2; S.camTy = (y0 + y1) / 2;
+  } else view.s = Math.max(view.fit, Math.min(near, view.s));
+  const s = view.s, k = snap ? 1 : Math.min(1, dt * 5);
+  // ventana del nivel: todo el ancho libre y, con controles, hasta dos filas tapadas por los botones
+  view.vw = view.aw / s; view.fv = view.fh / s + (view.pad ? 2 * T : 0);
+  if (L.W <= view.vw) { S.camX = 0; view.ox = view.il + (view.aw - L.W * s) / 2; }
   else {
-    const my = ps.reduce((s, p) => s + p.y + PH / 2, 0) / ps.length;
-    S.camY += (Math.max(0, Math.min(L.H - H, my - H * 0.55)) - S.camY) * k;
+    const maxX = L.W - view.vw, tx = Math.max(0, Math.min(maxX, (S.camTx ?? L.W / 2) - view.vw * 0.45));
+    S.camX = Math.max(0, Math.min(maxX, (S.camX || 0) + (tx - (S.camX || 0)) * k)); view.ox = view.il;
   }
-  if (L.W <= W) S.camX = 0;
+  if (L.H <= view.fv) { S.camY = 0; view.oy = view.pad ? Math.max(0, (view.fh - L.H * s) / 2) : (view.h - L.H * s) / 2; }
   else {
-    const mx = ps.reduce((s, p) => s + p.x + PW / 2, 0) / ps.length;
-    S.camX = (S.camX || 0) + (Math.max(0, Math.min(L.W - W, mx - W * 0.45)) - (S.camX || 0)) * k;
+    const maxY = L.H - view.fv, ty = Math.max(0, Math.min(maxY, (S.camTy ?? L.H / 2) - view.fh / s / 2));
+    S.camY = Math.max(0, Math.min(maxY, S.camY + (ty - S.camY) * k)); view.oy = 0;
   }
 }
 function resize() {
@@ -263,14 +279,18 @@ function resize() {
   const pad = !$("controls").hidden, ch = pad ? $("controls").offsetHeight : 0;
   // con controles, el nivel puede bajar hasta que los botones solo tapen las dos filas de abajo
   const css = getComputedStyle(document.documentElement), ins = (k) => parseFloat(css.getPropertyValue(k)) || 0;
-  const il = ins("--sal"), ir = ins("--sar"), aw = w - il - ir;
-  let s = Math.min(aw / W, h / H);
-  if (pad) s = Math.min(s, (h - ch) / (16 * T));
-  view = { s, ox: il + (aw - W * s) / 2, oy: pad ? Math.max(0, (h - ch - H * s) / 2) : (h - H * s) / 2, dpr };
-  if (S.L && Math.abs((S.L.cacheScale || 0) - Math.min(3, s * dpr)) > 0.01) buildCaches(S.L, s * dpr);
+  const il = ins("--sal"), ir = ins("--sar"), aw = w - il - ir, fh = h - ch;
+  let fit = Math.min(aw / W, h / H);
+  if (pad) fit = Math.min(fit, fh / (16 * T));
+  // al jugar, la cámara puede acercarse hasta bloques de 26 px, sin bajar de 10 filas visibles sobre los botones
+  const near = Math.min(26 / T, fh / (10 * T), aw / (20 * T));
+  Object.assign(view, { dpr, h, il, aw, fh, pad, fit, max: Math.max(fit, near),
+    cache: Math.min(3, dpr * Math.max(Math.min(aw / W, h / H), 26 / T)) });
+  if (S.L && Math.abs((S.L.cacheScale || 0) - view.cache) > 0.01) buildCaches(S.L, view.cache);
+  updateCamera(0, true);
 }
 function label(c, text, x, y, col, size) {
-  const fs = size || 10, maxW = W - 120;
+  const fs = size || 10, maxW = Math.min(W, view.vw || W) - 120;
   c.font = `600 ${fs}px Fredoka, ui-rounded, sans-serif`; c.textAlign = "center"; c.textBaseline = "middle";
   // si no cabe en una línea, se parte en dos por la palabra más cercana a la mitad
   let lines = [text];
@@ -298,11 +318,15 @@ function render(t) {
     ctx.fillStyle = "rgba(5,12,22,.45)"; ctx.fillRect(0, 0, cv.width, cv.height);
   }
   const k = view.s * view.dpr, cam = S.camY, camX = S.camX || 0, cs = L.cacheScale;
+  // lo visible del nivel: hasta el borde de la pantalla o hasta donde termina el nivel
+  const vw = Math.min(view.vw, L.W - camX), vh = Math.min((view.h - view.oy) / view.s, L.H - cam);
   ctx.setTransform(k, 0, 0, k, view.ox * view.dpr, view.oy * view.dpr);
-  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
-  ctx.drawImage(L.sky, 0, 0, W, H);
-  if (!(L.def.world >= 6)) drawAurora(ctx, t);
-  const sh = Math.min(H * cs, L.tiles.height - cam * cs), sw = Math.min(W * cs, L.tiles.width - camX * cs);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, vw, vh); ctx.clip();
+  // el cielo cubre la ventana y se desliza un poco al mover la cámara
+  const sk = Math.max(vw / W, vh / H), maxX = L.W - view.vw, maxY = L.H - view.fv;
+  ctx.drawImage(L.sky, -(W * sk - vw) * (maxX > 0 ? camX / maxX : 0.5), -(H * sk - vh) * (maxY > 0 ? cam / maxY : 1), W * sk, H * sk);
+  if (!(L.def.world >= 6)) drawAurora(ctx, t, vw);
+  const sh = Math.min(vh * cs, L.tiles.height - cam * cs), sw = Math.min(vw * cs, L.tiles.width - camX * cs);
   ctx.drawImage(L.tiles, camX * cs, cam * cs, sw, sh, 0, 0, sw / cs, sh / cs);
   ctx.save(); ctx.translate(-camX, -cam);
   drawDynamic(ctx, L, t);
@@ -329,7 +353,7 @@ function render(t) {
       ctx.fillStyle = "#ffe08a"; ctx.beginPath(); ctx.arc(lx, ly + 1, 3, 0, Math.PI * 2); ctx.fill();
     }
   }
-  drawWater(ctx, L, t, Math.floor(cam / T), Math.ceil((cam + H) / T) + 1);
+  drawWater(ctx, L, t, Math.floor(cam / T), Math.ceil((cam + vh) / T) + 1);
   drawBall(ctx, L, t);
   if (L.def.air) for (const p of ps) {
     if (p.air == null || p.air >= PHYS.airMax - 0.05) continue;
@@ -347,18 +371,18 @@ function render(t) {
   }
   ctx.restore();
   ctx.globalAlpha = 0.8; ctx.fillStyle = "#eef6fb";
-  for (const f of S.flakes) ctx.fillRect(f.x, f.y, f.s, f.s);
+  for (let fx = 0; fx < vw; fx += W) for (let fy = 0; fy < vh; fy += H) for (const f of S.flakes) ctx.fillRect(f.x + fx, f.y + fy, f.s, f.s);
   ctx.globalAlpha = 1;
   if ((S.screen === "play" || S.screen === "pause") && L.time < 7 && L.def.hint) {
-    ctx.globalAlpha = Math.min(1, (7 - L.time) * 1.5); label(ctx, L.def.hint, W / 2, 56, "#f3f8fb", 12); ctx.globalAlpha = 1;
+    ctx.globalAlpha = Math.min(1, (7 - L.time) * 1.5); label(ctx, L.def.hint, vw / 2, 56, "#f3f8fb", 12); ctx.globalAlpha = 1;
   }
   if (L.ball && !L.ball.stop) {
-    if (!L.ball.active) label(ctx, `¡Avalancha en ${Math.ceil(L.ball.delay - L.ball.t)}!`, W / 2, 84, "#ff8b4a", 14);
+    if (!L.ball.active) label(ctx, `¡Avalancha en ${Math.ceil(L.ball.delay - L.ball.t)}!`, vw / 2, 84, "#ff8b4a", 14);
     else {
       // brillo rojo en el borde izquierdo cuando la bola se acerca
       const gap = Math.max(0, ...ps.map((p) => p.x)) - (L.ball.x + L.ball.r);
       const k = Math.max(0, Math.min(1, 1 - (Math.min(...ps.map((p) => p.x)) - (L.ball.x + L.ball.r)) / 160));
-      if (k > 0 && gap > -999) { const g = ctx.createLinearGradient(0, 0, 70, 0); g.addColorStop(0, `rgba(255,80,80,${0.45 * k})`); g.addColorStop(1, "rgba(255,80,80,0)"); ctx.fillStyle = g; ctx.fillRect(0, 0, 70, H); }
+      if (k > 0 && gap > -999) { const g = ctx.createLinearGradient(0, 0, 70, 0); g.addColorStop(0, `rgba(255,80,80,${0.45 * k})`); g.addColorStop(1, "rgba(255,80,80,0)"); ctx.fillStyle = g; ctx.fillRect(0, 0, 70, vh); }
     }
   }
   if (L.def.timeLimit) {
@@ -412,12 +436,19 @@ $("pLevels").onclick = () => showScreen("levels");
 $("pMenu").onclick = () => { sendPresenceMenu(); S.mode = null; showScreen("menu"); demo(); };
 $("wNext").onclick = () => pickLevel(Math.min(LEVELS.length - 1, S.lvl + 1));
 $("wLevels").onclick = () => showScreen("levels");
+// donde se puede (Android), el botón acuesta el juego solo: pantalla completa y orientación horizontal fija
+if (document.documentElement.requestFullscreen && screen.orientation && screen.orientation.lock) $("btnRotate").hidden = false;
+$("btnRotate").onclick = () => {
+  unlockAudio();
+  document.documentElement.requestFullscreen({ navigationUI: "hide" }).then(() => screen.orientation.lock("landscape"))
+    .catch(() => { $("btnRotate").hidden = true; if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); });
+};
 function sendPresenceMenu() { if (S.room && S.me) { S.room.presence({ v: 1, r: S.me, sc: "menu", x: null, y: null }).catch(() => {}); S.sent = ""; } }
 document.addEventListener("visibilitychange", () => { if (document.hidden && S.mode === "local" && S.screen === "play") showScreen("pause"); });
 addEventListener("resize", resize);
 
 function demo() {
-  S.L = parseLevel(LEVELS[0], 0); buildCaches(S.L, view.s * view.dpr);
+  S.L = parseLevel(LEVELS[0], 0); buildCaches(S.L, view.cache);
   S.pengs = ["F", "B"].map((r) => newPenguin(r, S.L.starts[r])); S.remote = null; S.camY = 0;
   S.pengs.forEach((p) => (p.onGround = true));
 }
@@ -444,7 +475,7 @@ paintMute(); paintPickCanvases(); resize(); demo(); showScreen("menu"); S.roomSt
 // un enlace con ?sala=CÓDIGO entra directo a esa sala
 { const q = new URLSearchParams(location.search).get("sala");
   if (q && /^[A-Za-z0-9]{4}$/.test(q)) { S.mode = "online"; showScreen("lobby"); openCodeRoom(q.toUpperCase(), false); } }
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { paintPickCanvases(); if (S.L) buildCaches(S.L, view.s * view.dpr); });
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { paintPickCanvases(); if (S.L) buildCaches(S.L, view.cache); });
 requestAnimationFrame(frame);
 
 // ---------- latido de la sala ----------

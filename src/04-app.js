@@ -116,7 +116,7 @@ const skinFor = (p) => (p.remote ? (partnerP() && partnerP().sk) || "pinguino" :
 function loadLevel(i) {
   S.lvl = i;
   S.L = parseLevel(LEVELS[i], i);
-  buildCaches(S.L, view.s * view.dpr);
+  buildCaches(S.L, view.cache);
   const roles = S.mode === "online" ? [S.me] : ["F", "B"];
   S.pengs = roles.map((r) => newPenguin(r, S.L.starts[r]));
   S.remote = null;

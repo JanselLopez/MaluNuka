@@ -3,16 +3,20 @@
     "name": "Malu y Nuka",
     "slug": "malu-y-nuka",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "landscape",
     "userInterfaceStyle": "dark",
     "icon": "./assets/icon.png",
     "plugins": [
       [
         "expo-screen-orientation",
-        { "initialOrientation": "PORTRAIT" }
+        {
+          "initialOrientation": "LANDSCAPE"
+        }
       ],
       "@config-plugins/react-native-webrtc",
-      "./plugins/with-data-only-webrtc"
+      "./plugins/with-data-only-webrtc",
+      "expo-font",
+      "./plugins/with-release-signing"
     ],
     "ios": {
       "supportsTablet": false,

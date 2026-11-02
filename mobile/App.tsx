@@ -1,388 +1,434 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-  BackHandler,
-  Pressable,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  useWindowDimensions,
-} from "react-native";
+// Malu y Nuka para Android/iOS. El juego, sus dibujos y sus niveles son los mismos de la web (src/ del proyecto):
+// se copian con scripts/sync-web.js y se dibujan con Skia en la GPU. Los menús son vistas nativas con el estilo de la web.
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { BackHandler, PanResponder, PixelRatio, Pressable, ScrollView, Share, StatusBar, StyleSheet, Text, TextInput, Vibration, View, useWindowDimensions } from "react-native";
+import { BlendMode, Canvas, ClipOp, FillType, PaintStyle, Picture, Skia, StrokeCap, StrokeJoin, TileMode, useTypeface } from "@shopify/react-native-skia";
+import type { SkPicture, SkTypeface } from "@shopify/react-native-skia";
+import { useSharedValue } from "react-native-reanimated";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ScreenOrientation from "expo-screen-orientation";
-import Svg, { Circle, Defs, Ellipse, G, LinearGradient, Line, Path, Polygon, Rect, Stop } from "react-native-svg";
-import levels from "./src/levels.json";
-import { newRoomCode, OnlineRoom } from "./src/online";
-const Engine = require("./src/game-engine");
+import * as NavigationBar from "expo-navigation-bar";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
+import { useFonts, Fredoka_500Medium, Fredoka_600SemiBold, Fredoka_700Bold } from "@expo-google-fonts/fredoka";
+import { Nunito_600SemiBold, Nunito_800ExtraBold } from "@expo-google-fonts/nunito";
+import { OnlineRoom } from "./src/online";
+const { createGame } = require("./src/game");
+const { createControls } = require("./src/controls");
 
-type PenguinId = "F" | "B";
-type Input = { l: boolean; r: boolean; j: boolean; jp: boolean; g: boolean; gp: boolean };
-type Level = Record<string, any>;
-type Route = "home" | "levels" | "game" | "online";
-const C = { bg: "#0b1626", panel: "#12263d", tile: "#1b3654", ice: "#bfe3f2", snow: "#f3f8fb", muted: "#8fa9bd", blue: "#46a8f0", orange: "#ff8b4a", mint: "#7fe3c7" };
-const COLORS: Record<string, string> = { F: C.blue, B: C.orange };
-const LEVELS = levels as Level[];
+const C = { night: "#0b1626", deep: "#12263d", ice: "#bfe3f2", snow: "#f3f8fb", muted: "#8fa9bd", fred: "#46a8f0", bread: "#ff8b4a", mint: "#7fe3c7", ink: "#08111c" };
+const ENUMS = { BlendMode, PaintStyle, StrokeCap, StrokeJoin, TileMode, FillType, ClipOp };
+const SAVE_KEY = "fyb:v1";
+type Game = any;
 
-function Penguin({ p, yOffset, scale }: { p: any; yOffset: number; scale: number }) {
-  const bob = p.onGround ? Math.sin(p.anim * 12) * 0.6 : 0;
-  const x = p.x * scale, y = (p.y - yOffset + bob) * scale;
-  return <G transform={`translate(${x} ${y}) scale(${scale})`}>
-    <Ellipse cx="7" cy="10" rx="7" ry="9" fill={COLORS[p.id]} />
-    <Ellipse cx="7.5" cy="12" rx="4.1" ry="5.5" fill="#f3f8fb" />
-    <Circle cx={p.face > 0 ? 10 : 4} cy="7" r="1.15" fill="#08111c" />
-    <Polygon points={p.face > 0 ? "12,8 17,9.5 12,11" : "2,8 -3,9.5 2,11"} fill="#ffd166" />
-    <Ellipse cx="3" cy="17" rx="3" ry="1.2" fill="#ffcf55" />
-    <Ellipse cx="11" cy="17" rx="3" ry="1.2" fill="#ffcf55" />
-  </G>;
-}
+const EMPTY = () => { const r = Skia.PictureRecorder(); r.beginRecording(Skia.XYWHRect(0, 0, 1, 1)); return r.finishRecordingAsPicture(); };
 
-function GameScene({ level, players, cameraY, screenWidth, screenHeight, time }: { level: any; players: any[]; cameraY: number; screenWidth: number; screenHeight: number; time: number }) {
-  const L = level, W = Engine.W, H = Engine.H, T = Engine.T;
-  const scale = Math.min(screenWidth / W, screenHeight / 360);
-  const originX = (screenWidth - W * scale) / 2, originY = (screenHeight - 360 * scale) / 2;
-  const maxCam = Math.max(0, L.H - H), camY = Math.max(0, Math.min(maxCam, cameraY));
-  const nodes: React.ReactNode[] = [
-    <Defs key="defs"><LinearGradient id="sky" x1="0%" y1="0%" x2="0%" y2="100%"><Stop offset="0%" stopColor={L.def.world >= 6 ? "#0c3c50" : "#061022"} /><Stop offset="100%" stopColor={L.def.world >= 6 ? "#0b2637" : "#1a3a58"} /></LinearGradient></Defs>,
-    <Rect key="bg" x="0" y="0" width={W} height={360} fill="url(#sky)" />,
-  ];
-  for (let y = Math.floor(camY / T); y < Math.min(L.R, Math.ceil((camY + 360) / T)); y++) {
-    let run = -1;
-    for (let x = 0; x <= L.C; x++) {
-      if (x < L.C && L.wet[y][x]) { if (run < 0) run = x; continue; }
-      if (run >= 0) { nodes.push(<Rect key={`water-${run}-${y}`} x={run * T} y={y * T - camY} width={(x - run) * T} height={T} fill="#31a8d0" opacity="0.24" />); run = -1; }
-    }
-  }
-  for (let y = Math.floor(camY / T); y < Math.min(L.R, Math.ceil((camY + 360) / T)); y++) for (let x = 0; x < L.C; x++) {
-    const ch = L.cell[y][x]; if (!ch) continue;
-    const px = x * T, py = y * T;
-    if (ch === "#" || ch === "-" || ch === "=" || ch === "S" || ch === "%" || ch === "f" || ch === "g" || ch.startsWith("d")) {
-      const fill = ch === "-" ? "#8fd3ef" : ch === "f" ? "#2f89cf" : ch === "g" ? "#e8773b" : ch.startsWith("d") ? "#59728a" : ch === "%" ? "#517895" : ch === "S" ? "#a97a58" : ch === "=" ? "#96d3e8" : "#22476b";
-      nodes.push(<Rect key={`tile-${x}-${y}`} x={px} y={py - camY} width={T} height={T} rx={ch === "S" ? 3 : 1} fill={fill} />);
-      nodes.push(<Rect key={`shine-${x}-${y}`} x={px + 1} y={py - camY + 1} width={T - 2} height={2} fill="rgba(220,245,255,0.32)" />);
-    } else if (ch === "h" || ch === "u" || ch === "U") {
-      const solid = ch === "h" ? L.light && Math.hypot(px + T / 2 - L.light.x, py + T / 2 - L.light.y) <= Engine.PHYS.lightR : L.toggle === (ch === "u" ? 0 : 1);
-      if (solid) nodes.push(<Rect key={`special-${x}-${y}`} x={px} y={py - camY} width={T} height={T} fill={ch === "h" ? "#b8f0ff" : ch === "u" ? "#ff7eb6" : "#8be37a"} opacity="0.76" />);
-    }
-  }
-  for (const f of L.fish) if (!f.got) nodes.push(<G key={`fish-${f.x}-${f.y}`}><Ellipse cx={f.x} cy={f.y - camY} rx="6" ry="4" fill="#ffd166" /><Polygon points={`${f.x - 5},${f.y - camY} ${f.x - 10},${f.y - camY - 4} ${f.x - 10},${f.y - camY + 4}`} fill="#ffad4e" /><Circle cx={f.x + 3} cy={f.y - camY - 1} r="0.8" fill="#402d38" /></G>);
-  for (const s of L.spikes) nodes.push(<Polygon key={`spike-${s.cx}-${s.cy}`} points={`${s.x},${s.y - camY + s.h} ${s.x + s.w / 2},${s.y - camY} ${s.x + s.w},${s.y - camY + s.h}`} fill="#f2f3f5" />);
-  for (const b of L.buttons) nodes.push(<Rect key={`button-${b.id}-${b.x}`} x={b.x} y={b.y - camY - (b.down ? 2 : 0)} width={b.w} height={5} rx="2" fill={b.down ? C.mint : "#ffd166"} />);
-  for (const d of L.doors) if (L.door[d.id] < 0.85) nodes.push(<Rect key={`door-${d.id}-${d.x}-${d.y}`} x={d.x} y={d.y - camY} width={d.w} height={d.h} fill="#667f9a" opacity="0.9" />);
-  for (const l of L.lifts) nodes.push(<Rect key={`lift-${l.id}`} x={l.x} y={l.y - camY} width={l.w} height={l.h} rx="4" fill="#7797ad" />);
-  for (const lv of L.levers) nodes.push(<G key={`lever-${lv.cx}-${lv.cy}`}><Rect x={lv.x} y={lv.y - camY} width={lv.w} height={lv.h} rx="3" fill="#54c7a8" /><Line x1={lv.x + 3} y1={lv.y - camY + 5} x2={lv.x + lv.w - 3} y2={lv.y - camY + 1} stroke="#e7fff7" strokeWidth="2" /></G>);
-  for (const cr of L.crystals) nodes.push(<Polygon key={`crystal-${cr.cx}-${cr.cy}`} points={`${cr.x + cr.w / 2},${cr.y - camY} ${cr.x + cr.w},${cr.y - camY + cr.h / 2} ${cr.x + cr.w / 2},${cr.y - camY + cr.h} ${cr.x},${cr.y - camY + cr.h / 2}`} fill="#b892ff" />);
-  for (const v of L.vents) nodes.push(<G key={`vent-${v.cx}-${v.cy}`}><Circle cx={v.cx * T + 10} cy={v.cy * T - camY + 8} r="4" fill="#a8f0ff" opacity="0.8" /><Circle cx={v.cx * T + 10} cy={v.cy * T - camY} r="2" fill="#d8f8ff" opacity="0.72" /></G>);
-  for (const ic of L.icicles) if (ic.s !== "gone") nodes.push(<Polygon key={`icicle-${ic.cx}`} points={`${ic.x + 5},${ic.y - camY} ${ic.x + 15},${ic.y - camY} ${ic.x + 10},${ic.y - camY + 18}`} fill="#cceaf5" />);
-  for (const s of L.seesaws) nodes.push(<G key={`seesaw-${s.x0}-${s.y}`} transform={`rotate(${s.tilt * 4} ${s.mid} ${s.y * T - camY})`}><Rect x={s.x0 * T} y={s.y * T - camY} width={(s.x1 - s.x0 + 1) * T} height={T} rx="4" fill="#b77c52" /><Circle cx={s.mid} cy={s.y * T - camY + T} r="4" fill="#e8c498" /></G>);
-  for (const cp of L.checkpoints) nodes.push(<G key={`cp-${cp.i}`}><Line x1={cp.x} y1={cp.y - camY} x2={cp.x} y2={cp.y - camY - 20} stroke={cp.i <= L.cp ? C.mint : C.ice} strokeWidth="2" /><Polygon points={`${cp.x},${cp.y - camY - 20} ${cp.x + 14},${cp.y - camY - 16} ${cp.x},${cp.y - camY - 11}`} fill={cp.i <= L.cp ? C.mint : C.ice} /></G>);
-  if (L.exit) nodes.push(<G key="exit"><Path d={`M${L.exit.x} ${L.exit.y - camY + 40} Q${L.exit.x} ${L.exit.y - camY + 2} ${L.exit.x + 20} ${L.exit.y - camY + 2} Q${L.exit.x + 40} ${L.exit.y - camY + 2} ${L.exit.x + 40} ${L.exit.y - camY + 40} Z`} fill="#e5f2f7" /><Rect x={L.exit.x - 2} y={L.exit.y - camY + 38} width="44" height="4" rx="2" fill="#90c9df" /></G>);
-  if (L.cage && !L.cage.open) nodes.push(<G key="cage"><Rect x={L.cage.x} y={L.cage.y - camY} width={L.cage.w} height={L.cage.h} fill="none" stroke="#9ec9dc" strokeWidth="2" /><Line x1={L.cage.x + 7} y1={L.cage.y - camY} x2={L.cage.x + 7} y2={L.cage.y - camY + L.cage.h} stroke="#9ec9dc" /><Line x1={L.cage.x + 27} y1={L.cage.y - camY} x2={L.cage.x + 27} y2={L.cage.y - camY + L.cage.h} stroke="#9ec9dc" /></G>);
-  if (L.key && !L.key.holder) nodes.push(<Circle key="key" cx={L.key.x} cy={L.key.y - camY} r="5" fill="#ffd166" />);
-  if (L.ball?.active) nodes.push(<Circle key="ball" cx={L.ball.x} cy={L.ball.y - camY} r={L.ball.r} fill="#f4f6fa" stroke="#bfd7e5" strokeWidth="3" />);
-  if (L.flood) nodes.push(<Rect key="flood" x={L.flood.x0 * T} y={L.flood.surf - camY} width={(L.flood.x1 - L.flood.x0 + 1) * T} height={Math.max(0, L.H - L.flood.surf)} fill="#61c9e8" opacity="0.43" />);
-  for (const s of L.sentries) nodes.push(<G key={`sentry-${s.i}`}><Circle cx={s.x} cy={s.y - camY} r="7" fill="#f7c776" /><Path d={`M${s.x} ${s.y - camY} L${s.x + Math.cos(s.ang) * 60} ${s.y - camY + Math.sin(s.ang) * 60}`} stroke="#ffed9e" strokeWidth="1" opacity="0.42" /></G>);
-  for (const j of L.jellies) nodes.push(<Circle key={`jelly-${j.x}`} cx={j.x} cy={j.y - camY} r="7" fill="#d59dff" opacity="0.86" />);
-  if (L.rope && players.length === 2 && players.every((p) => !p.remote || p.visible)) nodes.push(<Line key="rope" x1={players[0].x + 7} y1={players[0].y - camY + 9} x2={players[1].x + 7} y2={players[1].y - camY + 9} stroke={C.ice} strokeWidth="1.3" opacity="0.7" />);
-  for (const p of players) if (!p.dead && (!p.remote || p.visible)) nodes.push(<Penguin key={`peng-${p.id}`} p={p} yOffset={camY} scale={1} />);
-  return <View style={styles.scene}><Svg width={W * scale} height={360 * scale} viewBox={`0 0 ${W} 360`} style={{ position: "absolute", left: originX, top: originY }}>{nodes}</Svg>
-    <View pointerEvents="none" style={styles.hud}><Text numberOfLines={1} style={styles.hudTitle}>{L.index + 1}. {L.def.name}</Text><Text style={styles.hudFish}>🐟 {L.fish.filter((f: any) => f.got).length}/{L.fish.length}</Text><Text style={styles.hudTime}>{Math.floor(time / 60)}:{String(Math.floor(time % 60)).padStart(2, "0")}</Text></View>
-  </View>;
-}
-
-function ControlButton({ label, color, onDown, onUp, wide = false, name }: { label: string; color: string; onDown: () => void; onUp: () => void; wide?: boolean; name: string }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={name} onPressIn={onDown} onPressOut={onUp} style={({ pressed }) => [styles.control, { borderColor: `${color}95`, backgroundColor: pressed ? color : "rgba(243,248,251,0.11)", width: wide ? 74 : 56, height: wide ? 66 : 56 }, pressed && styles.pressed]}><Text style={[styles.controlText, { color: "#f3f8fb" }]}>{label}</Text></Pressable>;
-}
-
-export default function App() {
-  const [route, setRoute] = useState<Route>("home");
-  const [levelIndex, setLevelIndex] = useState(0);
-  const [level, setLevel] = useState<any>(null);
-  const [players, setPlayers] = useState<any[]>([]);
-  const [, setRenderFrame] = useState(0);
-  const [gameRunId, setGameRunId] = useState(0);
-  const [clock, setClock] = useState(0);
-  const [paused, setPaused] = useState(false);
-  const [result, setResult] = useState<"won" | "fell" | null>(null);
-  const [roomCode, setRoomCode] = useState("");
-  const [joinCode, setJoinCode] = useState("");
-  const [roomStatus, setRoomStatus] = useState("Crea una sala o únete con un código.");
-  const [roomConnected, setRoomConnected] = useState(false);
-  const [partner, setPartner] = useState<any>(null);
-  const [roomHost, setRoomHost] = useState(false);
-  const [selectedOnlineLevel, setSelectedOnlineLevel] = useState(0);
-  const roomRef = useRef<OnlineRoom | null>(null);
-  const pkRef = useRef(Date.now());
-  const inputs = useRef<Record<PenguinId, Input>>({ F: { l: false, r: false, j: false, jp: false, g: false, gp: false }, B: { l: false, r: false, j: false, jp: false, g: false, gp: false } });
-  const state = useRef({ L: null as any, players: [] as any[], time: 0, exits: 0, stopped: false, paused: false, net: { tgLocal: 0, tgRemote: 0, th: 0, ld: 0, imp: 0, sw: 0, swx: 0, swy: 0 }, online: false, role: "F" as PenguinId, run: 0, round: 0, onlineLevel: -1, remotePresence: null as any, seenTh: 0, seenLd: 0, seenSw: 0 });
-  const lastFrame = useRef(0);
-  const lastRender = useRef(0);
-  const dims = useWindowDimensions();
-  const gameWidth = Math.max(dims.width, dims.height);
-  const gameHeight = Math.min(dims.width, dims.height);
-
-  const startLevel = useCallback((i: number) => {
-    const L = Engine.parseLevel(LEVELS[i], i);
-    const ps = [Engine.newPenguin("F", L.starts.F), Engine.newPenguin("B", L.starts.B)];
-    state.current = { L, players: ps, time: 0, exits: 0, stopped: false, paused: false, net: { tgLocal: 0, tgRemote: 0, th: 0, ld: 0, imp: 0, sw: 0, swx: 0, swy: 0 }, online: false, role: "F", run: 0, round: 0, onlineLevel: -1, remotePresence: null, seenTh: 0, seenLd: 0, seenSw: 0 };
-    inputs.current = { F: { l: false, r: false, j: false, jp: false, g: false, gp: false }, B: { l: false, r: false, j: false, jp: false, g: false, gp: false } };
-    setLevelIndex(i); setLevel(L); setPlayers(ps); setClock(0); setPaused(false); setResult(null); setGameRunId((n) => n + 1); setRoute("game");
-  }, []);
-
-  const startOnlineLevel = useCallback((i: number, incoming?: any) => {
-    const L = Engine.parseLevel(LEVELS[i], i);
-    const localRole: PenguinId = incoming ? (incoming.localRole || (incoming.r === "F" ? "B" : "F")) : state.current.role;
-    const ps = [Engine.newPenguin("F", L.starts.F), Engine.newPenguin("B", L.starts.B)];
-    const remoteRole: PenguinId = localRole === "F" ? "B" : "F";
-    const remote = ps.find((p: any) => p.id === remoteRole);
-    if (remote) remote.remote = true;
-    pkRef.current = incoming?.pk || Date.now();
-    if (incoming?.fm != null) L.fish.forEach((f: any, n: number) => { f.got = !!(incoming.fm & (1 << n)); });
-    if (typeof incoming?.cp === "number" && incoming.cp >= 0) {
-      const checkpoint = L.checkpoints.find((item: any) => item.i === incoming.cp);
-      if (checkpoint) {
-        L.cp = incoming.cp;
-        const placed: number[] = [];
-        for (const p of ps) {
-          const offsets = p.id === "F" ? [-9, 9, 0, -18, 18] : [9, -9, 0, 18, -18];
-          const x = checkpoint.x - Engine.PW / 2 + (offsets.find((offset: number) => placed.every((px) => Math.abs(checkpoint.x - Engine.PW / 2 + offset - px) >= 14)) ?? 0);
-          p.x = x; p.y = checkpoint.y - Engine.PH; p.prevX = x; p.prevY = p.y; placed.push(x);
-        }
-      }
-    }
-    if (L.key && incoming?.ky) L.key.holder = incoming.r;
-    if (incoming?.rc && L.cage) L.cage.open = true;
-    state.current = { L, players: ps, time: 0, exits: 0, stopped: false, paused: false, net: { tgLocal: 0, tgRemote: 0, th: 0, ld: 0, imp: 0, sw: 0, swx: 0, swy: 0 }, online: true, role: localRole, run: pkRef.current, round: incoming?.rs || 0, onlineLevel: i, remotePresence: incoming || null, seenTh: 0, seenLd: 0, seenSw: 0 };
-    inputs.current = { F: { l: false, r: false, j: false, jp: false, g: false, gp: false }, B: { l: false, r: false, j: false, jp: false, g: false, gp: false } };
-    setLevelIndex(i); setLevel(L); setPlayers(ps); setClock(0); setPaused(false); setResult(null); setGameRunId((n) => n + 1); setRoute("game");
-    return localRole;
-  }, [roomHost]);
-
-  const connectRoom = useCallback((host: boolean, requestedCode?: string) => {
-    roomRef.current?.close();
-    const code = (requestedCode || newRoomCode()).toUpperCase();
-    const room = new OnlineRoom(code, host);
-    roomRef.current = room;
-    state.current.role = host ? "F" : "B";
-    state.current.run = pkRef.current;
-    setRoomCode(code); setRoomHost(host); setPartner(null); setRoomConnected(false);
-    setRoomStatus(host ? "Creando sala…" : "Buscando sala…"); setRoute("online");
-    room.start(
-      () => { setRoomConnected(true); setRoomStatus(host ? "Sala lista. Comparte el código con tu pareja." : "Conectado. Esperando a tu pareja…"); room.presence({ v: 1, r: state.current.role, sc: "lobby", pk: state.current.run, lv: -1, rs: 0, x: null, y: null }); },
-      () => {
-        if (roomRef.current !== room) return;
-        const p = room.peers()[0] || null;
-        if (!state.current.online) setPartner(p);
-        state.current.remotePresence = p;
-        if (p?.r && p.r === state.current.role && !state.current.online) { state.current.role = p.r === "F" ? "B" : "F"; room.presence({ v: 1, r: state.current.role, sc: "lobby", pk: state.current.run, lv: -1, rs: 0, x: null, y: null }); }
-        if (p?.sc === "play" && Number.isInteger(p.lv) && p.lv >= 0 && p.lv < LEVELS.length) {
-          const s = state.current;
-          if (!s.online || s.run !== p.pk || !s.L || s.onlineLevel !== p.lv || (typeof p.rs === "number" && p.rs > s.round)) startOnlineLevel(p.lv, { ...p, localRole: p.r === "F" ? "B" : "F" });
-        } else if (p) setRoomStatus("Tu pareja está conectada. Espera a que inicie el nivel.");
-        else if (roomConnected) setRoomStatus(room.lost ? "Conexión interrumpida. Reconectando…" : host ? "Sala lista. Comparte el código con tu pareja." : "Esperando a tu pareja…");
-      },
-      (error) => { setRoomConnected(false); setRoomStatus(error === "unavailable-id" ? "Ese código ya está ocupado. Crea otra sala." : error === "peer-unavailable" ? "No encontramos esa sala. Revisa el código." : "No se pudo conectar. Revisa tu internet e inténtalo otra vez."); },
-    );
-  }, [roomConnected, startOnlineLevel]);
-
-  const sendOnlinePresence = useCallback(() => {
-    const room = roomRef.current, s = state.current;
-    if (!room) return;
-    const p = s.players.find((item) => item.id === s.role);
-    const play = s.online && !!s.L;
-    const out: any = { v: 1, r: s.role, sc: play ? "play" : "lobby", pk: s.run || pkRef.current, lv: play ? levelIndex : -1, rs: s.round || 0 };
-    if (play && p) Object.assign(out, {
-      x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10, vx: Math.round(p.vx), vy: Math.round(p.vy), f: p.face,
-      og: p.onGround ? 1 : 0, w: p.wet ? 1 : 0, d: p.dead ? 1 : 0, ex: p.inExit ? 1 : 0,
-      an: p.anchor ? 1 : 0, rl: p.reel ? 1 : 0, cl: p.cling || 0, st: p.stamina ?? null,
-      ky: s.L.key?.holder === s.role ? 1 : 0, cp: s.L.cp, rc: s.L.cage?.open ? 1 : 0,
-      th: s.net.th || 0, ld: s.net.ld || 0, imp: s.net.imp || 0,
-      sw: s.net.sw || 0, swx: s.net.swx, swy: s.net.swy, tg: s.net.tgLocal || 0,
-      fm: s.L.fish.reduce((m: number, f: any, i: number) => (f.got ? m | (1 << i) : m), 0),
-    });
-    else Object.assign(out, { x: null, y: null });
-    room.presence(out);
-  }, [levelIndex]);
-
-  const restartLevel = useCallback(() => {
-    const old = state.current.L, checkpoint = old?.cp ?? -1;
-    const fish = old?.fish.map((f: any) => f.got) ?? [];
-    const holder = old?.key?.holder ?? null;
-    startLevel(levelIndex);
-    if (checkpoint < 0) return;
-    const L = state.current.L, ps = state.current.players;
-    const c = L.checkpoints.find((item: any) => item.i === checkpoint);
-    if (!c) return;
-    L.cp = checkpoint;
-    L.fish.forEach((f: any, i: number) => { f.got = !!fish[i]; });
-    if (L.key && holder) L.key.holder = holder;
-    const placed: number[] = [];
-    for (const p of ps) {
-      const offsets = p.id === "F" ? [-9, 9, 0, -18, 18, -27, 27, -36, 36] : [9, -9, 0, 18, -18, 27, -27, 36, -36];
-      const x = c.x - Engine.PW / 2 + (offsets.find((offset: number) => placed.every((px) => Math.abs(c.x - Engine.PW / 2 + offset - px) >= 14)) ?? 0);
-      p.x = x; p.y = c.y - Engine.PH; p.prevX = x; p.prevY = p.y; placed.push(x);
-    }
-    if (L.ball) { L.ball.x = c.x - 300; L.ball.y = c.y - L.ball.r; L.ball.t = L.ball.delay - 1.5; }
-    setPlayers([...ps]); setLevel({ ...L });
-  }, [levelIndex, startLevel]);
-
+// ---------- lienzo Skia que se redibuja solo, sin pasar por React ----------
+// draw(ctx, ancho, alto, segundos, dt) dibuja con la API de canvas de la web; cada cuadro se graba y se pasa a la GPU.
+function Painter({ game, draw, style, fps = 60, onSize, children }: { game: Game; draw: (c: any, w: number, h: number, t: number, dt: number) => void; style?: any; fps?: number; onSize?: (w: number, h: number) => void; children?: React.ReactNode }) {
+  const pic = useSharedValue<SkPicture>(EMPTY());
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const drawRef = useRef(draw); drawRef.current = draw;
   useEffect(() => {
-    ScreenOrientation.lockAsync(route === "game" ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT).catch(() => {});
-  }, [route]);
-
-  useEffect(() => {
-    if (route !== "online" || !roomConnected) return;
-    sendOnlinePresence();
-    const timer = setInterval(sendOnlinePresence, 500);
-    return () => clearInterval(timer);
-  }, [route, roomConnected, sendOnlinePresence]);
-
-  useEffect(() => {
-    if (route !== "game") return;
-    state.current.stopped = false;
-    let frame = 0;
-    const tick = (now: number) => {
-      if (state.current.stopped) return;
-      frame = requestAnimationFrame(tick);
-      if (state.current.paused) { if (now - lastRender.current >= 33) { lastRender.current = now; setRenderFrame((n) => n + 1); } return; }
-      if (!lastFrame.current) lastFrame.current = now;
-      const dt = Math.min(0.033, (now - lastFrame.current) / 1000);
-      lastFrame.current = now;
-      if (dt <= 0) return;
-      const { L, players: ps } = state.current;
-      if (!L) return;
-      const online = state.current.online;
-      const local = online ? ps.find((p) => p.id === state.current.role) : null;
-      const remote = online ? ps.find((p) => p.id !== state.current.role) : null;
-      if (online && remote) {
-        const pr = state.current.remotePresence;
-        const visible = !!(pr && pr.sc === "play" && pr.pk === state.current.run && typeof pr.x === "number");
-        remote.visible = visible && !pr.d;
-        if (visible) {
-          if (!remote.seen || Math.hypot(pr.x - remote.x, pr.y - remote.y) > 48) { remote.x = pr.x; remote.y = pr.y; remote.prevX = remote.x; remote.prevY = remote.y; remote.seen = true; }
-          else { remote.x += (pr.x - remote.x) * Math.min(1, dt * 18); remote.y += (pr.y - remote.y) * Math.min(1, dt * 18); }
-          remote.vx = pr.vx || 0; remote.vy = pr.vy || 0; remote.face = pr.f || 1; remote.onGround = !!pr.og; remote.wet = !!pr.w; remote.inExit = !!pr.ex; remote.dead = !!pr.d; remote.anim += dt;
-          state.current.net.tgRemote = pr.tg || 0;
-          if (pr.fm != null) L.fish.forEach((f: any, i: number) => { if (!f.got && (pr.fm & (1 << i))) f.got = true; });
-          if (typeof pr.cp === "number") L.cp = Math.max(L.cp, pr.cp);
-          if (pr.rc && L.cage) L.cage.open = true;
-          if (pr.ky && L.key && !L.key.holder) L.key.holder = remote.id;
-          if ((pr.th || 0) > state.current.seenTh && local && local.support?.o === remote) { state.current.seenTh = pr.th; Engine.launch(local, Engine.PHYS.throwV, remote.face * Engine.PHYS.throwX); }
-          if ((pr.sw || 0) > state.current.seenSw && typeof pr.swx === "number" && local) { state.current.seenSw = pr.sw; local.x = pr.swx; local.y = pr.swy; local.prevX = local.x; local.prevY = local.y; }
-        } else remote.seen = false;
-      }
-      const ev: any[] = [];
-      for (const p of ps) { p.prevX = p.x; p.prevY = p.y; }
-      Engine.updateWorld(L, ps, dt, ev);
-      const actors: any[] = online ? [local].filter(Boolean) : ps;
-      const order = [...actors].sort((a: any, b: any) => (a.support?.k === "p" ? 1 : 0) - (b.support?.k === "p" ? 1 : 0));
-      for (const p of order) {
-        if (p.dead) continue;
-        Engine.applyCarry(L, p);
-        const input = inputs.current[p.id as PenguinId];
-        Engine.stepPenguin(L, p, input, ps, dt, ev);
-        input.jp = false; input.gp = false;
-      }
-      if (L.rope) Engine.ropeStep(L, ps[0], ps[1], dt);
-      Engine.coopEvents(L, online ? [local] : ps, ev, state.current.net, online ? remote : null);
-      if (online) sendOnlinePresence();
-      if (L.def.timeLimit && L.time > L.def.timeLimit) { state.current.stopped = true; setResult("fell"); }
-      if (ev.some((e) => e[0] === "die") || (online && state.current.remotePresence?.d)) { state.current.stopped = true; setResult("fell"); }
-      state.current.time += dt;
-      const completed = online ? !!(local?.inExit && remote?.visible && remote?.inExit) : ps.every((p) => p.inExit && !p.dead);
-      state.current.exits = completed ? state.current.exits + dt : 0;
-      if (state.current.exits > 0.35) { state.current.stopped = true; setResult("won"); }
-      if (now - lastRender.current >= 33) {
-        lastRender.current = now;
-        setRenderFrame((n) => n + 1);
-        if (Math.floor(state.current.time) !== Math.floor(state.current.time - dt)) setClock(state.current.time);
-      }
+    if (!size.w || !size.h) return;
+    let canvas: any = null, raf = 0, last = 0, prev = 0;
+    const ctx = new game.Ctx(null, () => canvas, game.fonts);
+    const bounds = Skia.XYWHRect(0, 0, size.w, size.h);
+    const loop = (ts: number) => {
+      raf = requestAnimationFrame(loop);
+      if (fps < 60 && ts - last < 1000 / fps - 3) return;
+      last = ts;
+      const dt = prev ? Math.min(0.1, (ts - prev) / 1000) : 1 / 60; prev = ts;
+      const rec = Skia.PictureRecorder();
+      canvas = rec.beginRecording(bounds);
+      ctx.stack = []; ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over"; ctx.setLineDash([]);
+      try { drawRef.current(ctx, size.w, size.h, ts / 1000, dt); } catch (e) { console.warn(e); }
+      pic.value = rec.finishRecordingAsPicture();
     };
-    frame = requestAnimationFrame(tick);
-    return () => { state.current.stopped = true; cancelAnimationFrame(frame); lastFrame.current = 0; };
-  }, [route, levelIndex, gameRunId, sendOnlinePresence]);
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [size.w, size.h, fps, game]);
+  return (
+    <View style={style} onLayout={(e) => { const { width, height } = e.nativeEvent.layout; setSize({ w: Math.round(width), h: Math.round(height) }); onSize && onSize(width, height); }}>
+      <Canvas style={StyleSheet.absoluteFill}><Picture picture={pic} /></Canvas>
+      {children}
+    </View>
+  );
+}
 
+// ---------- botones con el estilo de la web ----------
+function Btn({ title, sub, onPress, ghost, disabled, style, small }: { title: string; sub?: string; onPress: () => void; ghost?: boolean; disabled?: boolean; style?: any; small?: boolean }) {
+  return (
+    <Pressable disabled={disabled} onPress={onPress} style={({ pressed }) => [ghost ? s.ghost : s.btn, small && s.btnSmall, pressed && !disabled && (ghost ? s.ghostDown : s.btnDown), disabled && { opacity: 0.45 }, style]}>
+      <Text style={[s.btnText, ghost && { color: C.ice }, small && { fontSize: 15 }]} numberOfLines={1}>{title}</Text>
+      {sub ? <Text style={s.btnSub} numberOfLines={1}>{sub}</Text> : null}
+    </Pressable>
+  );
+}
+function Card({ children, wide, style }: { children: React.ReactNode; wide?: boolean; style?: any }) {
+  return <View style={[s.card, wide && { maxWidth: 720 }, style]}>{children}</View>;
+}
+function Screen({ children }: { children: React.ReactNode }) {
+  return <ScrollView style={s.screen} contentContainerStyle={s.screenIn} keyboardShouldPersistTaps="handled">{children}</ScrollView>;
+}
+const Dot = ({ tone }: { tone: string }) => <View style={[s.dot, tone === "on" && s.dotOn, tone === "warn" && { backgroundColor: C.bread }]} />;
+
+// ---------- pantallas ----------
+function Menu({ game }: { game: Game }) {
+  return (
+    <Screen>
+      <Card>
+        <Text style={s.logo}><Text style={{ color: C.fred }}>Malu</Text><Text style={s.logoY}> y </Text><Text style={{ color: C.bread }}>Nuka</Text></Text>
+        <Text style={s.tag}>Dos pingüinos, un iglú. Ninguno llega solo.</Text>
+        <View style={s.row}>
+          <Btn style={s.flex} title="En un celular" sub="Los dos con la misma pantalla" onPress={() => { game.setMode("local"); game.showScreen("levels"); }} />
+          <Btn style={s.flex} title="En línea" sub="Cada quien en su teléfono" onPress={() => { game.setMode("online"); game.showScreen("lobby"); }} />
+        </View>
+        <View style={s.row}>
+          <Btn style={s.flex} ghost title="Personajes" onPress={() => { game.charsBack = "menu"; game.showScreen("chars"); }} />
+          <Btn style={s.flex} ghost title="Cómo jugar" onPress={() => { game.helpBack = "menu"; game.showScreen("help"); }} />
+        </View>
+      </Card>
+    </Screen>
+  );
+}
+
+function Levels({ game }: { game: Game }) {
+  const info = game.mapInfo(), size = useRef({ w: 0, h: 0 });
+  const pan = useMemo(() => {
+    let lastDx = 0, moved = false;
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => { lastDx = 0; moved = false; },
+      onPanResponderMove: (_, g) => { if (Math.abs(g.dx) > 6) moved = true; if (moved) { game.mapPan(g.dx - lastDx, size.current.w, size.current.h); lastDx = g.dx; } },
+      onPanResponderRelease: (e) => { if (!moved) game.mapTap(e.nativeEvent.locationX, e.nativeEvent.locationY, size.current.h); },
+    });
+  }, [game]);
+  return (
+    <Screen>
+      <Card wide>
+        <Text style={s.h2}>{game.S.mode === "online" ? "Mapa · en línea" : "Mapa"}</Text>
+        <View style={s.mapWrap} {...pan.panHandlers}>
+          <Painter game={game} style={StyleSheet.absoluteFill} fps={30}
+            onSize={(w, h) => { if (!size.current.w) game.openMap(w, h); size.current = { w, h }; }}
+            draw={(c, w, h, t) => game.drawMap(c, w, h, t)} />
+          <Pressable style={[s.mapArrow, { left: 6 }]} onPress={() => game.mapPan(300 * size.current.h / game.MAP.h, size.current.w, size.current.h)}><Text style={s.mapArrowText}>‹</Text></Pressable>
+          <Pressable style={[s.mapArrow, { right: 6 }]} onPress={() => game.mapPan(-300 * size.current.h / game.MAP.h, size.current.w, size.current.h)}><Text style={s.mapArrowText}>›</Text></Pressable>
+        </View>
+        <View style={s.mapInfo}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={s.mapName} numberOfLines={1}>{info.name}</Text>
+            <Text style={s.mapStats} numberOfLines={2}>{info.stats}</Text>
+          </View>
+          <Btn ghost title="Volver" onPress={() => { if (game.S.mode === "online") game.showScreen("lobby"); else game.showScreen("menu"); }} />
+          <Btn title="Jugar" disabled={!info.open} style={{ minWidth: 120 }} onPress={() => game.pickLevel(info.index)} />
+        </View>
+      </Card>
+    </Screen>
+  );
+}
+
+function Chars({ game }: { game: Game }) {
+  const cur = game.curPair().id;
+  return (
+    <Screen>
+      <Card wide>
+        <Text style={s.h2}>Personajes</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
+          {game.PAIRS.map((pr: any) => {
+            const free = game.isUnlocked(pr.id), on = free && pr.id === cur;
+            return (
+              <Pressable key={pr.id} disabled={!free} onPress={() => game.selectPair(pr.id)} style={[s.pair, on && s.pairOn]}>
+                <Painter game={game} style={s.pairArt} fps={30} draw={(c, w, h, t) => { c.setTransform(w / 60, 0, 0, w / 60, 0, 0); game.drawPairCard(c, pr.id, t, on); }} />
+                <Text style={s.pairName} numberOfLines={1}>{pr.name}</Text>
+                <Text style={s.pairSub} numberOfLines={2}>{!free ? `En una jaula del nivel ${game.PAIR_CAGE[pr.id] + 1}` : pr.F === pr.B ? "Los dos iguales" : "Ella y él"}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+        <Text style={s.note}>Elijan una pareja: Malu va a la izquierda (azul) y Nuka a la derecha (naranja). Todos se juegan igual. Las parejas que faltan esperan en jaulas fuera del camino: búsquenlas y tóquenlas para liberarlas.</Text>
+        <Btn title="Listo" onPress={() => game.showScreen(game.charsBack || "menu")} />
+      </Card>
+    </Screen>
+  );
+}
+
+const HELP: [string, string][] = [
+  ["Controles", "Cada uno usa su lado: Malu a la izquierda y Nuka a la derecha. Apoya el dedo en el joystick y deslízalo para moverte. El botón grande salta; Agarrar aparece en los niveles que lo usan."],
+  ["La meta", "Los dos tienen que entrar al iglú. Los peces son un extra. Las banderas guardan el avance, pero solo si llegan los dos juntos."],
+  ["Subirse a la cabeza", "Salta encima de tu pareja y desde ahí vuelve a saltar: alcanzas repisas de 3 bloques que ninguno alcanza solo."],
+  ["Lanzar a tu pareja", "En los niveles con lanzamiento: con tu pareja parada en tu cabeza, toca Agarrar y sale volando bien alto hacia donde miras."],
+  ["Cuerda: anclarse y jalar", "Mantén Agarrar con los pies en el suelo: quedas anclado y tu pareja puede colgar sin arrastrarte. Anclado, mantén también Saltar para recoger la cuerda y subirla."],
+  ["Columpiarse", "Colgando de la cuerda, empuja a un lado y al otro para tomar impulso; en lo más alto del vaivén llegas a la repisa."],
+  ["Pegarse a la pared", "En el aire junto a una pared, mantén Agarrar: te quedas pegado un momento. Toca Saltar para impulsarte hacia arriba y al otro lado."],
+  ["Botones y puertas", "Un botón abre la puerta de su color mientras alguien lo pisa. Si tiene reloj, la deja abierta unos segundos. El botón grande necesita a los dos encima."],
+  ["Balancín, cristal y palanca", "Cae desde alto sobre un lado del balancín y tu pareja sale volando del otro. El cristal morado los cambia de lugar. La palanca cambia qué bloques de color existen."],
+  ["Viento, linterna y hielo", "El viento sopla hacia arriba mientras alguien pisa su botón. El hielo fantasma solo aparece cerca de la linterna de Malu. El hielo celeste resbala y el agrietado se rompe."],
+  ["Bajo el agua", "Saltar es nadar hacia arriba; mantén Agarrar para bucear. La barrita es tu aire: se llena en la superficie y en las burbujas. Toca Agarrar junto a tu pareja para compartir el aire."],
+  ["Peligros del mar", "Las corrientes te arrastran. No toques las medusas. Si la luz del rape te alcanza, te congela y viene a comerte: espera detrás de las rocas."],
+  ["La avalancha y el reloj", "La bola gigante nunca se detiene: si se quedan atrás, los aplasta. En los niveles con reloj, lleguen al iglú antes de que llegue a cero."],
+  ["Parejas en jaulas", "En algunos niveles hay una pareja encerrada fuera del camino. Tóquenla y podrán elegirla en Personajes."],
+  ["Jugar en línea", "Uno toca Crear sala y le pasa el código a su pareja; el otro escribe el código y toca Unirse. Cada uno maneja su personaje desde su teléfono."],
+];
+function Help({ game }: { game: Game }) {
+  return (
+    <Screen>
+      <Card wide>
+        <Text style={s.h2}>Cómo jugar</Text>
+        <View style={s.helpGrid}>
+          {HELP.map(([t, d]) => <View key={t} style={s.helpItem}><Text style={s.h3}>{t}</Text><Text style={s.note}>{d}</Text></View>)}
+        </View>
+        <Btn title="Entendido" onPress={() => game.showScreen(game.helpBack || "menu")} />
+      </Card>
+    </Screen>
+  );
+}
+
+function Lobby({ game }: { game: Game }) {
+  const [code, setCode] = useState("");
+  const L = game.lobbyInfo();
+  return (
+    <Screen>
+      <Card>
+        <Text style={s.h2}>Jugar en línea</Text>
+        {!L.inRoom ? (
+          <View style={s.row}>
+            <Btn style={s.flex} title="Crear sala" sub="Te damos un código para tu pareja" onPress={() => game.createRoom()} />
+            <View style={[s.flex, s.row, { flexWrap: "nowrap" }]}>
+              <TextInput value={code} onChangeText={(v) => setCode(v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4))} placeholder="CÓDIGO" placeholderTextColor="#5d7487"
+                autoCapitalize="characters" autoCorrect={false} maxLength={4} style={s.codeInput} onSubmitEditing={() => code.length === 4 && game.openCodeRoom(code, false)} />
+              <Btn ghost title="Unirse" disabled={code.length !== 4} onPress={() => game.openCodeRoom(code, false)} />
+            </View>
+          </View>
+        ) : (
+          <View style={[s.row, { alignItems: "center" }]}>
+            <Text style={s.salaCode}>Sala <Text style={s.salaCodeB}>{L.code || "····"}</Text></Text>
+            <Btn ghost title="Compartir" onPress={() => Share.share({ message: `Únete a mi sala de Malu y Nuka. Código: ${L.code}` }).catch(() => {})} />
+            <Btn ghost title="Salir" onPress={() => game.leaveRoom()} />
+          </View>
+        )}
+        {L.inRoom ? (
+          <View style={s.row}>
+            {(["F", "B"] as const).map((r) => (
+              <Pressable key={r} onPress={() => game.pickRole(r)} style={[s.pick, L.me === r && (r === "F" ? s.pickF : s.pickB)]}>
+                <Painter game={game} style={{ width: 56, height: 56 }} fps={20} draw={(c, w, h, t) => { c.setTransform(w / 30, 0, 0, w / 30, 0, 0); game.drawRole(c, r, t); }} />
+                <Text style={s.pickText}>{game.P_NAME[r]}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+        <View style={s.status}><Dot tone={L.tone} /><Text style={s.statusText}>{L.text}</Text></View>
+        <View style={s.row}>
+          <Btn style={s.flex} ghost title="Volver" onPress={() => { game.leaveRoom(); game.setMode(null); game.showScreen("menu"); }} />
+          <Btn style={s.flex} ghost title="Personajes" onPress={() => { game.charsBack = "lobby"; game.showScreen("chars"); }} />
+          <Btn style={s.flex} title="Elegir nivel" disabled={!L.ready} onPress={() => game.showScreen("levels")} />
+        </View>
+      </Card>
+    </Screen>
+  );
+}
+
+function Pause({ game }: { game: Game }) {
+  return (
+    <Screen>
+      <Card>
+        <Text style={s.h2}>Pausa</Text>
+        <View style={s.row}>
+          <Btn style={s.flex} title="Seguir" onPress={() => game.showScreen("play")} />
+          <Btn style={s.flex} ghost title="Reiniciar nivel" onPress={() => { game.requestRestart(); game.showScreen("play"); }} />
+        </View>
+        <View style={s.row}>
+          <Btn style={s.flex} ghost title="Niveles" onPress={() => game.showScreen("levels")} />
+          <Btn style={s.flex} ghost title="Cómo jugar" onPress={() => { game.helpBack = "pause"; game.showScreen("help"); }} />
+          <Btn style={s.flex} ghost title="Menú" onPress={() => { game.sendPresenceMenu(); game.leaveRoom(); game.setMode(null); game.showScreen("menu"); }} />
+        </View>
+      </Card>
+    </Screen>
+  );
+}
+
+function Win({ game }: { game: Game }) {
+  const r = game.S.result || { title: "", text: "", next: false };
+  return (
+    <Screen>
+      <Card style={{ alignItems: "stretch" }}>
+        <Text style={[s.h2, { textAlign: "center" }]}>{r.title}</Text>
+        <Text style={s.tag}>{r.text}</Text>
+        <View style={s.row}>
+          <Btn style={s.flex} ghost title="Niveles" onPress={() => game.showScreen("levels")} />
+          {r.next ? <Btn style={s.flex} title="Siguiente nivel" onPress={() => game.pickLevel(Math.min(game.LEVELS.length - 1, game.S.lvl + 1))} /> : null}
+        </View>
+      </Card>
+    </Screen>
+  );
+}
+
+function Hud({ game }: { game: Game }) {
+  const S = game.S, L = S.mode === "online" ? game.lobbyInfo() : null;
+  return (
+    <View style={s.hud} pointerEvents="box-none">
+      <Pressable style={s.hudBtn} onPress={() => game.showScreen("pause")} hitSlop={8}>
+        <View style={s.pauseBar} /><View style={s.pauseBar} />
+      </Pressable>
+      <Text style={s.hudPill} numberOfLines={1}>{S.lvl + 1}. {game.LEVELS[S.lvl].name}</Text>
+      <View style={{ flex: 1 }} />
+      {L ? <View style={[s.hudPill, s.rowC]}><Dot tone={L.net} /><Text style={s.netText}>{L.netText}</Text></View> : null}
+      {S.hud.time ? <Text style={[s.hudPill, S.hud.low && { backgroundColor: "rgba(229,72,77,.85)" }]}>{S.hud.time}</Text> : null}
+      <Text style={s.hudPill}>🐟 {S.hud.fish}</Text>
+    </View>
+  );
+}
+
+// ---------- la app ----------
+export default function App() {
+  const [fontsReady] = useFonts({ Fredoka_500Medium, Fredoka_600SemiBold, Fredoka_700Bold, Nunito_600SemiBold, Nunito_800ExtraBold });
+  const tf600 = useTypeface(Fredoka_600SemiBold), tf700 = useTypeface(Fredoka_700Bold);
+  const [saved, setSaved] = useState<any>(undefined);
+  useEffect(() => { AsyncStorage.getItem(SAVE_KEY).then((v) => { try { setSaved(v ? JSON.parse(v) : {}); } catch { setSaved({}); } }, () => setSaved({})); }, []);
+  useEffect(() => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+    NavigationBar.setVisibilityAsync("hidden").catch(() => {});
+  }, []);
+  const ready = fontsReady && tf600 && tf700 && saved !== undefined;
+  const game = useMemo(() => (ready ? makeGame(tf600 as SkTypeface, tf700 as SkTypeface, saved) : null), [ready]);
+  if (!game) return <View style={{ flex: 1, backgroundColor: C.night }}><StatusBar hidden /></View>;
+  return <Main game={game} />;
+}
+
+function makeGame(tf600: SkTypeface, tf700: SkTypeface, saved: any) {
+  const cache = new Map<string, any>();
+  const fonts = (fam: string, weight: number, size: number) => {
+    const k = (weight >= 700 ? 7 : 6) + ":" + size;
+    let f = cache.get(k);
+    if (!f) { f = Skia.Font(weight >= 700 ? tf700 : tf600, size); f.setSubpixel(true); f.setLinearMetrics(true); cache.set(k, f); }
+    return f;
+  };
+  const game = createGame({
+    Skia, enums: ENUMS, fonts, saved, pixelRatio: PixelRatio.get(),
+    save: (json: string) => { AsyncStorage.setItem(SAVE_KEY, json).catch(() => {}); },
+    makeRoom: (code: string, host: boolean) => new OnlineRoom(code, host),
+    vibrate: (ms: number) => Vibration.vibrate(ms),
+  });
+  game.fonts = fonts;
+  return game;
+}
+
+function Main({ game }: { game: Game }) {
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => game.subscribe(rerender), [game]);
+  const { width, height } = useWindowDimensions();
+  const controls = useMemo(() => createControls(game), [game]);
+  const S = game.S, screen = S.screen, playing = screen === "play";
+  const ins = { l: 0, r: 0, b: 0 };
+  const stripH = playing ? controls.layout(width, height, ins) : 0;
+  // con los controles a la vista el nivel se acomoda arriba; en los menús se centra
+  useEffect(() => { game.resize(width, height, ins, stripH); }, [width, height, stripH, game]);
+  useEffect(() => {
+    if (playing) activateKeepAwakeAsync("juego").catch(() => {}); else { deactivateKeepAwake("juego"); controls.reset(); }
+  }, [playing]);
   useEffect(() => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (route === "game") { state.current.paused = true; setPaused(true); return true; }
-      if (route === "levels" || route === "online") { roomRef.current?.close(); roomRef.current = null; setRoomCode(""); setPartner(null); setRoomConnected(false); setRoomStatus("Crea una sala o únete con un código."); setRoute("home"); return true; }
+      if (screen === "play") { game.showScreen("pause"); return true; }
+      if (screen === "pause") { game.showScreen("play"); return true; }
+      if (screen === "help") { game.showScreen(game.helpBack || "menu"); return true; }
+      if (screen === "chars") { game.showScreen(game.charsBack || "menu"); return true; }
+      if (screen === "levels" || screen === "win") { game.showScreen(S.mode === "online" ? "lobby" : "menu"); return true; }
+      if (screen === "lobby") { game.leaveRoom(); game.setMode(null); game.showScreen("menu"); return true; }
       return false;
     });
     return () => sub.remove();
-  }, [route]);
-
-  const setControl = (id: PenguinId, key: keyof Input, active: boolean) => {
-    const input = inputs.current[id]; input[key] = active;
-    if (active && key === "j") input.jp = true;
-    if (active && key === "g") input.gp = true;
+  }, [screen, game]);
+  const draw = useCallback((c: any, w: number, h: number, t: number, dt: number) => {
+    game.frame(dt, t);
+    game.render(c, t);
+    if (game.S.screen === "play") controls.draw(c);
+  }, [game, controls]);
+  const touches = (fn: (id: number, x: number, y: number) => void) => (e: any) => {
+    for (const t of e.nativeEvent.changedTouches) fn(t.identifier, t.pageX, t.pageY);
   };
-  const back = () => { state.current.paused = true; setPaused(true); };
-  const exitGame = () => {
-    state.current.stopped = true; setPaused(false);
-    if (state.current.online) {
-      const role = state.current.role;
-      state.current.online = false; state.current.L = null;
-      roomRef.current?.presence({ v: 1, r: role, sc: "lobby", pk: state.current.run, lv: -1, rs: 0, x: null, y: null });
-      setRoute("online");
-    } else setRoute("levels");
-  };
-  const leaveRoom = () => { roomRef.current?.close(); roomRef.current = null; setPartner(null); setRoomConnected(false); setRoomStatus("Crea una sala o únete con un código."); setRoomCode(""); setRoute("home"); };
-  const camY = level && players.length ? Math.max(0, players.reduce((n, p) => n + p.y, 0) / players.length - 174) : 0;
-
-  if (route === "game" && level) return <View style={styles.game}><StatusBar hidden /><GameScene level={level} players={players} cameraY={camY} screenWidth={gameWidth} screenHeight={gameHeight} time={clock} />
-    <Pressable onPress={back} style={styles.gameBack}><Text style={styles.gameBackText}>Ⅱ</Text></Pressable>
-    <View style={styles.controls}>
-      {(state.current.online ? [state.current.role] : ["F", "B"] as PenguinId[]).map((id) => <View key={id} style={styles.pad}>
-        <Text style={[styles.padName, { color: COLORS[id] }]}>{id === "F" ? "MALU" : "NUKA"}</Text>
-        <View style={styles.padButtons}><ControlButton name={`Mover ${id === "F" ? "Malu" : "Nuka"} a la izquierda`} label="‹" color={COLORS[id]} onDown={() => setControl(id, "l", true)} onUp={() => setControl(id, "l", false)} /><ControlButton name={`Mover ${id === "F" ? "Malu" : "Nuka"} a la derecha`} label="›" color={COLORS[id]} onDown={() => setControl(id, "r", true)} onUp={() => setControl(id, "r", false)} /></View>
-        {(level.rope || level.def.grab || level.def.throw || level.def.air) && <ControlButton name={`Agarrar con ${id === "F" ? "Malu" : "Nuka"}`} label="AG" color={COLORS[id]} onDown={() => setControl(id, "g", true)} onUp={() => setControl(id, "g", false)} />}
-        <ControlButton name={`Saltar con ${id === "F" ? "Malu" : "Nuka"}`} label="↑" color={COLORS[id]} wide onDown={() => setControl(id, "j", true)} onUp={() => setControl(id, "j", false)} />
-      </View>)}
+  return (
+    <View style={{ flex: 1, backgroundColor: C.night }}>
+      <StatusBar hidden />
+      <Painter game={game} style={StyleSheet.absoluteFill} draw={draw} />
+      {playing || screen === "pause" || screen === "win" ? <Hud game={game} /> : null}
+      {playing ? (
+        <View style={[s.controls, { height: stripH }]}
+          onTouchStart={touches(controls.down)} onTouchMove={touches(controls.move)}
+          onTouchEnd={touches((id) => controls.up(id))} onTouchCancel={touches((id) => controls.up(id))} />
+      ) : null}
+      {screen === "menu" ? <Menu game={game} /> : null}
+      {screen === "levels" ? <Levels game={game} /> : null}
+      {screen === "chars" ? <Chars game={game} /> : null}
+      {screen === "help" ? <Help game={game} /> : null}
+      {screen === "lobby" ? <Lobby game={game} /> : null}
+      {screen === "pause" ? <Pause game={game} /> : null}
+      {screen === "win" ? <Win game={game} /> : null}
+      {S.toast ? <View style={s.toastWrap} pointerEvents="none"><Text style={s.toast}>{S.toast}</Text></View> : null}
+      {game.lobbyInfo().follow ? (
+        <View style={s.follow}>
+          <Text style={s.followText}>{game.lobbyInfo().follow}</Text>
+          <Btn small title="Entrar" onPress={() => game.followPartner()} />
+        </View>
+      ) : null}
     </View>
-    {paused && !result && <View style={styles.resultShade}><View style={styles.resultCard}><Text style={styles.resultEmoji}>Ⅱ</Text><Text style={styles.resultTitle}>Pausa</Text><Text style={styles.resultSub}>{LEVELS[levelIndex].name}</Text><Pressable onPress={() => { state.current.paused = false; setPaused(false); }} style={styles.primary}><Text style={styles.primaryTitle}>Seguir jugando</Text></Pressable><Pressable onPress={() => state.current.online ? startOnlineLevel(levelIndex) : startLevel(levelIndex)} style={styles.secondary}><Text style={styles.secondaryTitle}>Reiniciar nivel</Text></Pressable><Pressable onPress={exitGame} style={styles.back}><Text style={styles.backText}>{state.current.online ? "Volver a la sala" : "Elegir otro nivel"}</Text></Pressable></View></View>}
-    {result && <View style={styles.resultShade}><View style={styles.resultCard}><Text style={styles.resultEmoji}>{result === "won" ? "🏁" : "❄️"}</Text><Text style={styles.resultTitle}>{result === "won" ? "¡Llegaron juntos!" : "¡Intentémoslo otra vez!"}</Text><Text style={styles.resultSub}>{result === "won" ? `${LEVELS[levelIndex].name} completado` : "Malu y Nuka pueden volver a empezar."}</Text><Pressable onPress={() => result === "won" ? (state.current.online ? startOnlineLevel(Math.min(levelIndex + 1, LEVELS.length - 1)) : startLevel(Math.min(levelIndex + 1, LEVELS.length - 1))) : (state.current.online ? startOnlineLevel(levelIndex) : restartLevel())} style={styles.primary}><Text style={styles.primaryTitle}>{result === "won" ? "Siguiente nivel" : "Volver a intentar"}</Text></Pressable><Pressable onPress={exitGame} style={styles.secondary}><Text style={styles.secondaryTitle}>{state.current.online ? "Volver a la sala" : "Elegir otro nivel"}</Text></Pressable></View></View>}
-  </View>;
-
-  return <SafeAreaView style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={C.bg} />
-    <View style={styles.top}><View style={styles.brandMark}><Text style={styles.markText}>M</Text></View><Text style={styles.brand}>MALU <Text style={{ color: C.ice }}>Y</Text> NUKA</Text><Text style={styles.eyebrow}>UNA AVENTURA EN EQUIPO</Text></View>
-    {route === "home" ? <View style={styles.homeContent}>
-      <View style={styles.hero}><View style={[styles.penguinCard, { backgroundColor: C.blue, marginRight: -8 }]}><Text style={styles.penguinFace}>•ᴗ•</Text></View><View style={[styles.penguinCard, { backgroundColor: C.orange, marginLeft: -8 }]}><Text style={styles.penguinFace}>•ᴗ•</Text></View></View>
-      <Text style={styles.title}>Dos pingüinos.{"\n"}Un solo equipo.</Text><Text style={styles.subtitle}>Ayúdense para llegar juntos al iglú.</Text>
-      <Pressable onPress={() => setRoute("levels")} style={({ pressed }) => [styles.primary, pressed && styles.pressed]}><Text style={styles.primaryTitle}>Jugar en este teléfono</Text><Text style={styles.primarySub}>Malu y Nuka comparten la pantalla</Text></Pressable>
-      <Pressable onPress={() => setRoute("online")} style={styles.secondary}><View><Text style={styles.secondaryTitle}>Jugar en línea</Text><Text style={styles.secondarySub}>Cada quien desde su teléfono</Text></View><Text style={styles.chevron}>›</Text></Pressable>
-      <View style={styles.feature}><Text style={styles.featureIcon}>❄</Text><Text style={styles.featureText}>{LEVELS.length} niveles · 7 mundos · juego cooperativo</Text></View>
-    </View> : route === "levels" ? <View style={styles.levelPage}>
-      <Pressable onPress={() => setRoute("home")} style={styles.back}><Text style={styles.backText}>‹  Volver</Text></Pressable><Text style={styles.pageTitle}>Elige un nivel</Text><Text style={styles.pageSubtitle}>Trabajen juntos para llegar al iglú.</Text>
-      <ScrollView contentContainerStyle={styles.levelGrid}>{LEVELS.map((item, index) => <Pressable key={index} onPress={() => startLevel(index)} style={({ pressed }) => [styles.levelCard, pressed && styles.pressed]}>
-        <Text style={styles.levelNumber}>MUNDO {item.world} · NIVEL {String(index + 1).padStart(2, "0")}</Text><Text style={styles.levelName} numberOfLines={2}>{item.name}</Text><Text style={styles.levelGo}>Jugar <Text style={styles.chevron}>›</Text></Text>
-      </Pressable>)}</ScrollView>
-    </View> : <View style={styles.onlinePage}>
-      <Pressable onPress={leaveRoom} style={styles.back}><Text style={styles.backText}>‹  Volver</Text></Pressable>
-      <Text style={styles.onlineIcon}>⌁</Text><Text style={styles.pageTitle}>Aventura en línea</Text>
-      <Text style={styles.pageSubtitle}>{roomStatus}</Text>
-      {roomCode ? <View style={styles.roomCodeCard}><Text style={styles.roomCodeLabel}>CÓDIGO DE SALA</Text><Text style={styles.roomCode}>{roomCode}</Text><Text style={styles.roomCodeLabel}>{partner ? `PAREJA CONECTADA · TÚ ${state.current.role === "F" ? "MALU" : "NUKA"}` : roomHost ? "COMPARTE EL CÓDIGO PARA JUGAR" : "CONECTÁNDOTE A LA SALA"}</Text></View> : null}
-      {!roomCode ? <>
-        <Pressable onPress={() => connectRoom(true)} style={styles.primary}><Text style={styles.primaryTitle}>Crear sala</Text><Text style={styles.primarySub}>Comparte el código para invitar a tu pareja</Text></Pressable>
-        <Text style={styles.joinLabel}>O únete con un código</Text>
-        <View style={styles.joinRow}><TextInput value={joinCode} onChangeText={(t) => setJoinCode(t.replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase())} placeholder="ABCD" placeholderTextColor={C.muted} autoCapitalize="characters" maxLength={4} style={styles.joinInput} /><Pressable disabled={joinCode.length !== 4} onPress={() => connectRoom(false, joinCode)} style={[styles.joinButton, joinCode.length !== 4 && { opacity: 0.45 }]}><Text style={styles.joinButtonText}>Unirse</Text></Pressable></View>
-      </> : null}
-      {roomCode && roomConnected && roomHost && partner ? <>
-        <Pressable onPress={() => setSelectedOnlineLevel((n) => (n + 1) % LEVELS.length)} style={styles.levelPicker}><Text style={styles.levelPickerLabel}>NIVEL PARA JUGAR</Text><Text style={styles.levelPickerName}>{LEVELS[selectedOnlineLevel].name}  ›</Text><Text style={styles.levelNumber}>MUNDO {LEVELS[selectedOnlineLevel].world} · NIVEL {String(selectedOnlineLevel + 1).padStart(2, "0")}</Text></Pressable>
-        <Pressable onPress={() => startOnlineLevel(selectedOnlineLevel)} style={styles.primary}><Text style={styles.primaryTitle}>Empezar partida</Text></Pressable>
-      </> : null}
-      <Pressable onPress={leaveRoom} style={styles.back}><Text style={styles.backText}>{roomCode ? "Salir de la sala" : "‹  Volver al inicio"}</Text></Pressable>
-      <Text style={styles.onlineHint}>Puedes jugar con otra persona desde la app o desde la web.</Text>
-    </View>}
-    <View style={styles.footer}><Text style={styles.footerText}>HECHO PARA JUGAR JUNTOS</Text><View style={styles.footerDots}><View style={[styles.dot, { backgroundColor: C.blue }]} /><View style={[styles.dot, { backgroundColor: C.orange }]} /></View></View>
-  </SafeAreaView>;
+  );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg, paddingHorizontal: 24 }, top: { alignItems: "center", paddingTop: 12 }, brandMark: { width: 42, height: 42, borderRadius: 15, backgroundColor: C.tile, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#34536b" }, markText: { color: C.ice, fontSize: 21, fontWeight: "900" }, brand: { color: C.snow, fontSize: 13, fontWeight: "900", letterSpacing: 2.5, marginTop: 9 }, eyebrow: { color: C.muted, fontSize: 9, fontWeight: "800", letterSpacing: 2, marginTop: 5 },
-  homeContent: { flex: 1, justifyContent: "center", paddingBottom: 5 }, hero: { height: 102, flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 16 }, penguinCard: { width: 70, height: 78, borderRadius: 32, borderWidth: 4, borderColor: C.snow, alignItems: "center", justifyContent: "center", elevation: 7 }, penguinFace: { fontSize: 22, color: C.snow, fontWeight: "900" }, title: { color: C.snow, textAlign: "center", fontSize: 31, lineHeight: 37, letterSpacing: -0.8, fontWeight: "900" }, subtitle: { color: C.muted, textAlign: "center", fontSize: 14, marginTop: 10, marginBottom: 23 },
-  primary: { backgroundColor: C.snow, borderRadius: 18, paddingVertical: 15, paddingHorizontal: 18, shadowColor: "#6c8fa6", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.75, shadowRadius: 0, elevation: 3 }, primaryTitle: { color: C.bg, fontSize: 16, fontWeight: "900", textAlign: "center" }, primarySub: { color: "#566f82", fontSize: 12, fontWeight: "600", textAlign: "center", marginTop: 4 }, secondary: { marginTop: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: 17, padding: 16, backgroundColor: C.panel, borderWidth: 1, borderColor: "#28435c" }, secondaryTitle: { color: C.snow, fontWeight: "800", fontSize: 15 }, secondarySub: { color: C.muted, fontSize: 12, marginTop: 3 }, chevron: { color: C.ice, fontSize: 22, fontWeight: "500" }, feature: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 22 }, featureIcon: { color: C.mint, fontSize: 14 }, featureText: { color: C.muted, fontSize: 12, fontWeight: "700" },
-  levelPage: { flex: 1, paddingTop: 18 }, back: { alignSelf: "flex-start", paddingVertical: 8, paddingRight: 14 }, backText: { color: C.ice, fontSize: 15, fontWeight: "700" }, pageTitle: { color: C.snow, fontWeight: "900", fontSize: 27, marginTop: 10 }, pageSubtitle: { color: C.muted, fontSize: 13, marginTop: 5, marginBottom: 15 }, levelGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", paddingBottom: 18 }, levelCard: { width: "48.2%", minHeight: 116, padding: 13, backgroundColor: C.panel, borderRadius: 15, marginBottom: 9, borderWidth: 1, borderColor: "#28435c" }, levelNumber: { color: C.mint, fontSize: 8, fontWeight: "900", letterSpacing: 0.8 }, levelName: { color: C.snow, fontSize: 14, fontWeight: "800", marginTop: 7, minHeight: 34 }, levelGo: { color: C.ice, fontSize: 12, fontWeight: "800", marginTop: 6 },
-  onlinePage: { flex: 1, alignItems: "stretch", justifyContent: "center", paddingHorizontal: 12 }, onlineIcon: { color: C.mint, fontSize: 42, textAlign: "center" }, joinLabel: { color: C.muted, fontSize: 12, fontWeight: "700", marginTop: 20, marginBottom: 8, textAlign: "center" }, joinRow: { flexDirection: "row", gap: 8 }, joinInput: { flex: 1, backgroundColor: C.panel, borderColor: "#28435c", borderWidth: 1, borderRadius: 14, paddingHorizontal: 16, color: C.snow, fontSize: 18, fontWeight: "900", letterSpacing: 4, textAlign: "center" }, joinButton: { backgroundColor: C.mint, borderRadius: 14, justifyContent: "center", paddingHorizontal: 20 }, joinButtonText: { color: C.bg, fontWeight: "900" }, roomCodeCard: { backgroundColor: C.panel, borderRadius: 18, padding: 18, alignItems: "center", marginVertical: 8, borderWidth: 1, borderColor: "#28435c" }, roomCodeLabel: { color: C.muted, fontSize: 9, fontWeight: "900", letterSpacing: 1.4, textAlign: "center" }, roomCode: { color: C.snow, fontSize: 38, fontWeight: "900", letterSpacing: 8, marginVertical: 8 }, levelPicker: { backgroundColor: C.panel, borderRadius: 16, borderWidth: 1, borderColor: "#28435c", padding: 14, marginBottom: 10 }, levelPickerLabel: { color: C.mint, fontSize: 9, fontWeight: "900", letterSpacing: 1.2 }, levelPickerName: { color: C.snow, fontSize: 16, fontWeight: "800", marginTop: 7 }, onlineHint: { color: C.muted, fontSize: 11, textAlign: "center", marginTop: 14 }, footer: { height: 34, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 9 }, footerText: { color: "#61798e", fontSize: 8, fontWeight: "900", letterSpacing: 1.6 }, footerDots: { flexDirection: "row", gap: 4 }, dot: { width: 6, height: 6, borderRadius: 3 },
-  game: { flex: 1, backgroundColor: C.bg }, scene: { ...StyleSheet.absoluteFill, backgroundColor: C.bg }, hud: { position: "absolute", top: 8, left: 56, right: 12, height: 38, flexDirection: "row", alignItems: "center", gap: 8 }, hudTitle: { color: C.snow, backgroundColor: "rgba(8,17,28,0.68)", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, fontWeight: "800", overflow: "hidden", flexShrink: 1 }, hudFish: { color: C.ice, backgroundColor: "rgba(8,17,28,0.68)", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, fontWeight: "800" }, hudTime: { color: C.snow, backgroundColor: "rgba(8,17,28,0.68)", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, fontWeight: "800" }, gameBack: { position: "absolute", top: 8, left: 10, width: 38, height: 38, borderRadius: 12, backgroundColor: "rgba(8,17,28,0.76)", alignItems: "center", justifyContent: "center" }, gameBackText: { color: C.snow, fontSize: 28, lineHeight: 32 }, controls: { position: "absolute", left: 9, right: 9, bottom: 6, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" }, pad: { flexDirection: "row", alignItems: "flex-end", gap: 7 }, padName: { fontSize: 9, fontWeight: "900", letterSpacing: 1, marginHorizontal: 3, marginBottom: 9, textShadowColor: C.bg, textShadowRadius: 4 }, padButtons: { flexDirection: "row", gap: 5 }, control: { alignItems: "center", justifyContent: "center", borderWidth: 2, borderRadius: 18, marginBottom: 0 }, controlText: { fontSize: 24, fontWeight: "900" }, resultShade: { ...StyleSheet.absoluteFill, backgroundColor: "rgba(3,10,19,0.72)", alignItems: "center", justifyContent: "center", padding: 24 }, resultCard: { width: "88%", maxWidth: 420, backgroundColor: C.panel, borderRadius: 24, padding: 22, alignItems: "stretch", borderWidth: 1, borderColor: "#38566d" }, resultEmoji: { fontSize: 34, textAlign: "center", marginBottom: 6 }, resultTitle: { color: C.snow, fontSize: 21, fontWeight: "900", textAlign: "center" }, resultSub: { color: C.muted, fontSize: 13, textAlign: "center", marginTop: 6, marginBottom: 18 }, pressed: { opacity: 0.84, transform: [{ scale: 0.98 }] },
+const display = "Fredoka_600SemiBold", body = "Nunito_600SemiBold";
+const s = StyleSheet.create({
+  screen: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "rgba(8,17,28,.58)" },
+  screenIn: { flexGrow: 1, alignItems: "center", justifyContent: "center", paddingVertical: 12, paddingHorizontal: 24 },
+  card: { width: "100%", maxWidth: 560, backgroundColor: "rgba(18,38,61,.92)", borderWidth: 2, borderColor: "rgba(191,227,242,.16)", borderRadius: 20, padding: 16, gap: 12 },
+  logo: { fontFamily: "Fredoka_700Bold", fontSize: 50, textAlign: "center", textShadowColor: "rgba(0,0,0,.35)", textShadowOffset: { width: 0, height: 3 }, textShadowRadius: 0 },
+  logoY: { color: C.ice, fontSize: 28 },
+  tag: { fontFamily: body, color: C.muted, fontSize: 15, textAlign: "center", lineHeight: 20 },
+  h2: { fontFamily: display, fontSize: 24, color: C.snow },
+  h3: { fontFamily: display, fontSize: 15, color: C.ice, marginBottom: 2 },
+  note: { fontFamily: body, color: C.muted, fontSize: 13, lineHeight: 18 },
+  row: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
+  rowC: { flexDirection: "row", alignItems: "center", gap: 6 },
+  flex: { flexGrow: 1, flexBasis: 150 },
+  btn: { backgroundColor: C.snow, borderRadius: 14, paddingVertical: 11, paddingHorizontal: 16, alignItems: "center", justifyContent: "center",
+    borderBottomWidth: 4, borderBottomColor: "#86a9bc" },
+  btnDown: { transform: [{ translateY: 3 }], borderBottomWidth: 1 },
+  btnSmall: { paddingVertical: 7, paddingHorizontal: 12 },
+  ghost: { borderRadius: 14, paddingVertical: 11, paddingHorizontal: 16, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "rgba(191,227,242,.3)" },
+  ghostDown: { backgroundColor: "rgba(191,227,242,.1)" },
+  btnText: { fontFamily: display, fontSize: 18, color: C.ink },
+  btnSub: { fontFamily: body, fontSize: 12.5, color: "#3d5568", marginTop: 1 },
+  mapWrap: { height: 200, borderRadius: 16, overflow: "hidden", backgroundColor: "#0e2034" },
+  mapArrow: { position: "absolute", top: "50%", marginTop: -23, width: 34, height: 46, borderRadius: 12, backgroundColor: "rgba(8,17,28,.55)", alignItems: "center", justifyContent: "center" },
+  mapArrowText: { fontFamily: display, fontSize: 28, color: C.snow, lineHeight: 32 },
+  mapInfo: { flexDirection: "row", alignItems: "center", gap: 10 },
+  mapName: { fontFamily: display, fontSize: 18, color: C.snow },
+  mapStats: { fontFamily: body, fontSize: 13, color: C.muted },
+  pair: { width: 132, borderRadius: 14, padding: 6, paddingBottom: 8, backgroundColor: "#1b3654", alignItems: "center", gap: 2, borderWidth: 2, borderColor: "rgba(191,227,242,.12)" },
+  pairOn: { borderColor: C.mint, borderWidth: 3, backgroundColor: "#173a5c" },
+  pairArt: { width: 120, height: 60 },
+  pairName: { fontFamily: display, fontSize: 14, color: C.snow },
+  pairSub: { fontFamily: body, fontSize: 11, color: C.muted, textAlign: "center" },
+  helpGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  helpItem: { flexGrow: 1, flexBasis: 260, backgroundColor: "rgba(8,17,28,.3)", borderRadius: 14, padding: 10 },
+  codeInput: { flex: 1, minWidth: 90, fontFamily: display, fontSize: 22, letterSpacing: 4, color: C.snow, backgroundColor: "rgba(8,17,28,.5)", borderRadius: 14,
+    borderWidth: 2, borderColor: "rgba(191,227,242,.3)", paddingHorizontal: 12, paddingVertical: 6, textAlign: "center" },
+  salaCode: { flex: 1, fontFamily: display, fontSize: 16, color: C.muted },
+  salaCodeB: { fontFamily: "Fredoka_700Bold", fontSize: 30, color: C.snow, letterSpacing: 4 },
+  pick: { flexGrow: 1, flexBasis: 120, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, padding: 6, backgroundColor: "#1b3654", borderWidth: 2, borderColor: "rgba(191,227,242,.12)" },
+  pickF: { borderColor: C.fred, borderWidth: 3, backgroundColor: "#173a5c" },
+  pickB: { borderColor: C.bread, borderWidth: 3, backgroundColor: "#3a2a24" },
+  pickText: { fontFamily: display, fontSize: 17, color: C.snow },
+  status: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 22 },
+  statusText: { flex: 1, fontFamily: body, fontSize: 14.5, color: C.ice },
+  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: C.muted },
+  dotOn: { backgroundColor: C.mint },
+  hud: { position: "absolute", left: 0, right: 0, top: 0, flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 6, paddingHorizontal: 10 },
+  hudBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(8,17,28,.55)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 },
+  pauseBar: { width: 4, height: 16, borderRadius: 2, backgroundColor: C.snow },
+  hudPill: { fontFamily: display, fontSize: 15, color: C.snow, backgroundColor: "rgba(8,17,28,.55)", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, overflow: "hidden", maxWidth: 260 },
+  netText: { fontFamily: body, fontSize: 13, color: C.snow },
+  controls: { position: "absolute", left: 0, right: 0, bottom: 0 },
+  toastWrap: { position: "absolute", top: 56, left: 16, right: 16, alignItems: "center" },
+  toast: { fontFamily: display, fontSize: 16, color: C.ink, backgroundColor: C.snow, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 14, overflow: "hidden", textAlign: "center" },
+  follow: { position: "absolute", bottom: 12, alignSelf: "center", flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "rgba(18,38,61,.96)", borderRadius: 16, padding: 8, paddingLeft: 14, borderWidth: 2, borderColor: "rgba(127,227,199,.4)" },
+  followText: { fontFamily: body, fontSize: 14, color: C.ice },
 });

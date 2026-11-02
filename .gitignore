@@ -10,3 +10,4 @@ mobile/src/game-engine.js
 *.jks
 *.log
 firma/
+mobile/src/web-game.js

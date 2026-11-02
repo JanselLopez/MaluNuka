@@ -291,12 +291,12 @@ function drawWater(c, L, t, y0, y1) {
   }
 }
 
-function drawAurora(c, t) {
+function drawAurora(c, t, w) {
   c.save(); c.globalCompositeOperation = "lighter";
   for (let k = 0; k < 2; k++) {
     c.strokeStyle = k ? "rgba(127,227,199,.07)" : "rgba(150,140,255,.05)";
     c.lineWidth = 26 - k * 8; c.beginPath();
-    for (let x = -20; x <= W + 20; x += 20) {
+    for (let x = -20; x <= (w || W) + 20; x += 20) {
       const y = 70 + k * 26 + Math.sin(x * 0.012 + t * 0.25 + k) * 22 + Math.sin(x * 0.03 - t * 0.4) * 6;
       x === -20 ? c.moveTo(x, y) : c.lineTo(x, y);
     }
