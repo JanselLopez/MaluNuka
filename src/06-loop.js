@@ -112,6 +112,8 @@ function openCodeRoom(code, host) {
 function leaveRoom() {
   if (S.room && S.room.close) S.room.close();
   S.room = null; S.roomKind = null; S.partner = null; S.connected = false; S.roomState = "none"; S.salaCode = null; S.salaHost = false;
+  // al salir de la sala vuelve la pareja propia
+  if (sharedPair) { sharedPair = null; applyPair(); paintPickCanvases(); }
 }
 function pickRole(r) {
   S.me = r;
@@ -139,6 +141,7 @@ function scanPeers() {
   S.partner = list.find((p) => p.presence.r && p.presence.r !== S.me) || list[0] || null;
   const pr = partnerP();
   if (!pr || S.mode !== "online" || !S.me) return;
+  syncPair(pr);
   const tie = pr.pk === S.pk && pr.lv !== S.lvl && S.me === "B";
   if (pr.r !== S.me && typeof pr.lv === "number" && pr.lv >= 0 && pr.lv < LEVELS.length && (pr.pk > S.pk || tie)) {
     S.pk = pr.pk; S.rs = Math.max(S.rs, pr.rs || 0); S.runTime = 0; S.falls = 0;
@@ -150,6 +153,15 @@ function scanPeers() {
     if (S.remote && S.remote.visible) burst(S.remote.x + PW / 2, S.remote.y + PH / 2, 18, P_COLOR[S.remote.id], 110);
     if (!S.restartT) { SFX.die(); S.restartT = 0.6; }
   }
+}
+// los dos juegan con la pareja que eligió el último; si nadie eligió en la sala, con la de quien es Malu.
+// Las versiones que no mandan pq (la app vieja) siguen viendo a cada quien con lo suyo.
+function syncPair(pr) {
+  if (typeof pr.pq !== "number" || !PAIRS.some((p) => p.id === pr.pp) || pr.pp === curPair().id) return;
+  if (pr.pq < S.pq || (pr.pq === S.pq && !(pr.r && pr.r !== S.me && S.me === "B"))) return;
+  S.pq = pr.pq; sharedPair = pr.pp; applyPair(); paintPickCanvases(); S.sent = "";
+  if (S.screen === "chars") buildCharsScreen();
+  toast(`Los dos juegan con ${pairById(pr.pp).name}, como eligió tu pareja.`);
 }
 function updateRemote(dt) {
   const r = S.remote, pr = partnerP(), L = S.L;
@@ -193,7 +205,7 @@ function sendPresence(force) {
   if (!force && now - (S.lastSend || 0) < 33) return;
   const p = S.pengs[0], play = S.screen === "play" || S.screen === "pause" || S.screen === "win";
   const sc = play ? "play" : S.screen === "menu" ? "menu" : "lobby";
-  const o = { v: 1, r: S.me, sk: store.skins[S.me] || "pinguino", sc, pk: S.pk, lv: S.L ? S.lvl : -1, rs: S.rs };
+  const o = { v: 1, r: S.me, sk: store.skins[S.me] || "pinguino", pp: curPair().id, pq: S.pq, sc, pk: S.pk, lv: S.L ? S.lvl : -1, rs: S.rs };
   if (play && p) {
     Object.assign(o, { x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10, vx: Math.round(p.vx), vy: Math.round(p.vy), f: p.face,
       og: p.onGround ? 1 : 0, w: p.wet ? 1 : 0, d: p.dead ? 1 : 0, ex: p.inExit ? 1 : 0,

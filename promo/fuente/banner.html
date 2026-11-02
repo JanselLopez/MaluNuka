@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Banner Malu y Nuka</title>
+<style>
+@font-face{font-family:Fredoka;src:url(fonts/fredoka-latin-600-normal.woff2);font-weight:600}
+@font-face{font-family:Fredoka;src:url(fonts/fredoka-latin-700-normal.woff2);font-weight:700}
+@font-face{font-family:Nunito;src:url(fonts/nunito-latin-800-normal.woff2);font-weight:800}
+:root{--fred:#46a8f0;--bread:#ff8b4a;--ice:#bfe3f2;--snow:#f3f8fb}
+*{box-sizing:border-box}
+body{margin:0;background:#000}
+.slide{position:relative;width:1280px;height:640px;overflow:hidden;font-family:Nunito,sans-serif;color:var(--snow);
+  background:linear-gradient(180deg,#1f4e79 0%,#183c62 45%,#10284a 100%)}
+.abs{position:absolute}
+.logo{font-family:Fredoka;font-weight:700;font-size:124px;line-height:1;margin:0;text-shadow:0 5px 0 rgba(0,0,0,.3)}
+.logo .f{color:var(--fred)} .logo .b{color:var(--bread)} .logo .y{color:var(--ice);font-size:.55em;margin:0 .15em;vertical-align:.2em}
+.ground{position:absolute;left:0;right:0;bottom:0;background:#1d3a59}
+.ground::before{content:"";position:absolute;left:-10px;right:-10px;top:-11px;height:24px;border-radius:12px;background:#eef6fb}
+.ground::after{content:"";position:absolute;left:0;right:0;top:10px;height:14px;
+  background:radial-gradient(circle at 50% 0,#eef6fb 7px,transparent 8px) 0 0/64px 14px repeat-x}
+.pills{display:flex;gap:14px;flex-wrap:wrap}
+.pill{display:inline-flex;align-items:center;gap:10px;padding:11px 22px;border-radius:999px;font-family:Fredoka;font-weight:600;font-size:26px;
+  background:rgba(8,17,28,.45);border:2px solid rgba(191,227,242,.35)}
+.pill i{width:12px;height:12px;border-radius:50%}
+</style>
+</head>
+<body>
+<section class="slide" data-name="banner">
+  <h1 class="logo abs" style="left:72px;top:110px"><span class="f">Malu</span><span class="y">y</span><span class="b">Nuka</span></h1>
+  <p class="abs" style="left:76px;top:262px;margin:0;font-weight:800;font-size:38px;line-height:1.25;color:var(--ice)">
+    Dos pingüinos, un iglú.<br><span style="color:var(--snow)">Ninguno llega solo.</span></p>
+  <div class="pills abs" style="left:72px;top:400px;width:600px">
+    <span class="pill"><i style="background:var(--fred)"></i>Cooperativo para 2</span>
+    <span class="pill"><i style="background:var(--bread)"></i>PC y celular</span>
+    <span class="pill"><i style="background:var(--ice)"></i>7 mundos · 32 niveles</span>
+  </div>
+
+  <svg class="abs" style="left:742px;top:120px" width="84" height="43" viewBox="0 0 44 22"><use href="#fish"/></svg>
+  <svg class="abs" style="left:1130px;top:190px;transform:scaleX(-1)" width="70" height="36" viewBox="0 0 44 22"><use href="#fish"/></svg>
+  <svg class="abs" style="left:1045px;top:432px" width="190" height="116" viewBox="0 0 230 140"><use href="#igloo"/></svg>
+  <img class="abs" src="sprites/pareja-pinguinos.png" style="width:640px;left:560px;top:257px;filter:drop-shadow(0 10px 14px rgba(0,0,0,.3))">
+  <div class="ground" style="top:556px"></div>
+</section>
+
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="fish" viewBox="0 0 44 22">
+      <ellipse cx="17" cy="11" rx="15" ry="9" fill="#dbe9f3"/><path d="M29 11 L43 2 L43 20 Z" fill="#dbe9f3"/><circle cx="10" cy="9" r="2.4" fill="#0b1626"/>
+    </symbol>
+    <symbol id="igloo" viewBox="0 0 230 140">
+      <radialGradient id="warm" cx="50%" cy="80%" r="60%"><stop offset="0" stop-color="#ffd166"/><stop offset=".55" stop-color="#ff8b4a" stop-opacity=".9"/><stop offset="1" stop-color="#ff8b4a" stop-opacity="0"/></radialGradient>
+      <ellipse cx="115" cy="120" rx="110" ry="40" fill="url(#warm)" opacity=".35"/>
+      <path d="M15 135 A100 100 0 0 1 215 135 Z" fill="#eef6fb"/>
+      <g stroke="#bcd3e3" stroke-width="4" fill="none">
+        <path d="M33 95 H197 M22 115 H208 M55 70 H175"/>
+        <path d="M80 70 V95 M150 70 V95 M115 95 V115 M60 95 V115 M170 95 V115 M100 45 V70 M130 45 V70"/>
+      </g>
+      <path d="M85 135 V112 A30 30 0 0 1 145 112 V135 Z" fill="#ffb347"/>
+      <path d="M93 135 V114 A22 22 0 0 1 137 114 V135 Z" fill="url(#warm)"/>
+    </symbol>
+  </defs>
+</svg>
+
+<script>
+// el mismo cielo del carrusel: estrellas cuadradas y dos bandas de aurora
+let seed = 11;
+const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+const band = (y, amp, thick, ph, len) => {
+  let top = "", bot = [];
+  for (let x = -20; x <= 1300; x += 20) {
+    const yy = y + Math.sin(x / len + ph) * amp + x * 0.04;
+    top += (x === -20 ? "M" : "L") + x + " " + yy.toFixed(1);
+    bot.unshift("L" + x + " " + (yy + thick).toFixed(1));
+  }
+  return top + bot.join("") + "Z";
+};
+const s = document.querySelector(".slide"), svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+svg.setAttribute("viewBox", "0 0 1280 640"); svg.setAttribute("style", "position:absolute;inset:0;width:100%;height:100%");
+svg.innerHTML = `<path d="${band(150, 45, 70, 0.4, 230)}" fill="#3b8fa8" opacity=".22"/>
+  <path d="${band(250, 40, 55, 1.2, 210)}" fill="#4a72c4" opacity=".2"/>` +
+  Array.from({ length: 90 }, () => { const r = rnd() < 0.15 ? 4 : 3;
+    return `<rect x="${(rnd() * 1280).toFixed(0)}" y="${(rnd() * 540).toFixed(0)}" width="${r}" height="${r}" fill="#dfeefa" opacity="${(0.35 + rnd() * 0.5).toFixed(2)}"/>`; }).join("");
+s.prepend(svg);
+</script>
+</body>
+</html>

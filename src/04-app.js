@@ -31,7 +31,9 @@ if ((store.layout || 1) < 2 && LEVELS[11] && LEVELS[11].name === "Columpio") {
 const PAIR_CAGE = {};
 LEVELS.forEach((lv, i) => { if (lv.cage) PAIR_CAGE[lv.cage] = i; });
 const isUnlocked = (id) => id === "pinguinos" || !!store.freed[id] || !(id in PAIR_CAGE);
-const curPair = () => (isUnlocked(store.pair) ? pairById(store.pair) : PAIRS[0]);
+// en línea los dos juegan con la misma pareja, aunque uno todavía no la haya rescatado
+let sharedPair = null;
+const curPair = () => (sharedPair && S.mode === "online" ? pairById(sharedPair) : isUnlocked(store.pair) ? pairById(store.pair) : PAIRS[0]);
 function applyPair() { const p = curPair(); store.skins = { F: p.F, B: p.B }; }
 applyPair();
 function save() { try { localStorage.setItem("fyb:v1", JSON.stringify(store)); } catch (e) {} }
@@ -40,7 +42,7 @@ const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padSt
 
 const S = { mode: null, screen: "menu", L: null, lvl: 0, pengs: [], me: null, remote: null, partner: null,
   pk: 0, rs: 0, winT: 0, won: false, restartT: 0, particles: [], flakes: [], room: null, roomState: "pending", sent: "",
-  camY: 0, runTime: 0, falls: 0 };
+  camY: 0, runTime: 0, falls: 0, pq: 0 };
 let view = { s: 1, ox: 0, oy: 0, dpr: 1 };
 
 // ---------- Pantallas ----------
@@ -94,6 +96,8 @@ function buildCharsScreen() {
     b.onclick = () => {
       // la primera vez que eligen una pareja rescatada: ver un anuncio o quitar los anuncios
       if (Monet.pairNeedsAd(pr.id)) return openGate({ kind: "pair", pair: pr.id, done: () => { buildCharsScreen(); [...$("pairGrid").children].find((x) => x.dataset.pair === pr.id).click(); } });
+      // en línea la elección vale para los dos: el contador más alto gana
+      if (S.mode === "online" || S.room) { sharedPair = pr.id; S.pq = Math.max(S.pq, (partnerP() && partnerP().pq) || 0) + 1; }
       store.pair = pr.id; applyPair(); save();
       grid.querySelectorAll(".pair").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       S.sent = ""; paintPickCanvases(); unlockAudio(); SFX.lever();
