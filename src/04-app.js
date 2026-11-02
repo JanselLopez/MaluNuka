@@ -1,6 +1,17 @@
 // ---------- App: estado, pantallas, controles y sonido ----------
 const $ = (id) => document.getElementById(id);
 const cv = $("game"), ctx = cv.getContext("2d");
+// Analítica anónima: GoatCounter cuenta visitas automáticamente y estos eventos
+// distinguen el modo de juego y el progreso. La carga del contador es asíncrona.
+function trackGameEvent(path, everyTime) {
+  let tries = 0;
+  const send = () => {
+    if (window.goatcounter && window.goatcounter.count) {
+      window.goatcounter.count({ path, event: true, no_session: !!everyTime });
+    } else if (++tries < 40) setTimeout(send, 250);
+  };
+  send();
+}
 const other = (r) => (r === "F" ? "B" : "F");
 const WORLDS = { 1: "El pueblo", 2: "El glaciar", 3: "La montaña", 4: "La cueva de cristal", 5: "La tormenta", 6: "Bajo el hielo", 7: "La avalancha" };
 const store = { unlocked: 1, best: {}, bestTime: {}, mute: false, skins: { F: "pinguino", B: "pinguino" } };
@@ -126,6 +137,9 @@ function pickLevel(i, paid) {
   if (!paid && Monet.worldNeedsAd(i)) return openGate({ kind: "world", level: i, done: () => pickLevel(i, true) });
   if (S.mode === "online") S.pk = Math.max(S.pk, partnerP()?.pk || 0) + 1;
   S.runTime = 0; S.falls = 0;
+  const mode = S.mode === "online" ? "en-linea" : "solo";
+  trackGameEvent(`jugador-${mode}`);
+  trackGameEvent(`partida-iniciada-${mode}`, true);
   loadLevel(i); showScreen("play"); keepAwake();
   S.sent = ""; sendPresence(true); // que la pareja se entere al instante
 }
@@ -162,6 +176,7 @@ function updateFishHud() {
 }
 function win() {
   S.won = true;
+  trackGameEvent(`nivel-completado-${S.mode === "online" ? "en-linea" : "solo"}-nivel-${S.lvl + 1}`, true);
   if (S.L.ball) S.L.ball.stop = true;
   const got = S.L.fish.filter((f) => f.got).length;
   store.best[S.lvl] = Math.max(store.best[S.lvl] || 0, got);

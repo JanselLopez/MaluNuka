@@ -50,7 +50,8 @@ fs.writeFileSync(path.join(publicar, "fonts", "fonts.css"), css);
 const webHead = headMarkup.replace(/<link rel="preconnect"[^>]*>\s*/g, "").replace(/<link rel="stylesheet" href="https:\/\/fonts\.googleapis\.com[^>]*>/, '<link rel="stylesheet" href="fonts/fonts.css">');
 if (webHead.includes("fonts.googleapis.com")) throw new Error("la web todavía intenta descargar tipografías de Google");
 fs.writeFileSync(path.join(publicar, "index.html"),
-  page("width=device-width,initial-scale=1,viewport-fit=cover", webHead) +
+  page("width=device-width,initial-scale=1,viewport-fit=cover", webHead +
+    '<script data-goatcounter="https://janselalb.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>') +
   bodyMarkup +
   '\n<script src="lib/peerjs.min.js"></script>\n<script>\n' + js + "\n</script>\n</body></html>\n");
 fs.writeFileSync(path.join(publicar, "LEEME.txt"), `MALU Y NUKA · versión web\n\n` +

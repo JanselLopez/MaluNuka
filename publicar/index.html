@@ -218,7 +218,7 @@ h3.sub{font-family:var(--display);font-size:16px;font-weight:600;margin:2px 0 8p
 .mute{position:absolute;right:max(14px, var(--sar));top:max(14px, var(--sat))}
 </style>
 
-<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif;background:#0b1626}[hidden]{display:none!important}</style></head><body><div id="stage"><canvas id="game"></canvas></div>
+<script data-goatcounter="https://janselalb.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif;background:#0b1626}[hidden]{display:none!important}</style></head><body><div id="stage"><canvas id="game"></canvas></div>
 
 <div id="hud" hidden>
   <button class="hud-btn" id="btnPause" aria-label="Pausa">
@@ -2767,6 +2767,17 @@ function drawPenguin(c, id, x, y, face, o) { drawCharacter(c, o.kind || "pinguin
 // ---------- App: estado, pantallas, controles y sonido ----------
 const $ = (id) => document.getElementById(id);
 const cv = $("game"), ctx = cv.getContext("2d");
+// Analítica anónima: GoatCounter cuenta visitas automáticamente y estos eventos
+// distinguen el modo de juego y el progreso. La carga del contador es asíncrona.
+function trackGameEvent(path, everyTime) {
+  let tries = 0;
+  const send = () => {
+    if (window.goatcounter && window.goatcounter.count) {
+      window.goatcounter.count({ path, event: true, no_session: !!everyTime });
+    } else if (++tries < 40) setTimeout(send, 250);
+  };
+  send();
+}
 const other = (r) => (r === "F" ? "B" : "F");
 const WORLDS = { 1: "El pueblo", 2: "El glaciar", 3: "La montaña", 4: "La cueva de cristal", 5: "La tormenta", 6: "Bajo el hielo", 7: "La avalancha" };
 const store = { unlocked: 1, best: {}, bestTime: {}, mute: false, skins: { F: "pinguino", B: "pinguino" } };
@@ -2892,6 +2903,9 @@ function pickLevel(i, paid) {
   if (!paid && Monet.worldNeedsAd(i)) return openGate({ kind: "world", level: i, done: () => pickLevel(i, true) });
   if (S.mode === "online") S.pk = Math.max(S.pk, partnerP()?.pk || 0) + 1;
   S.runTime = 0; S.falls = 0;
+  const mode = S.mode === "online" ? "en-linea" : "solo";
+  trackGameEvent(`jugador-${mode}`);
+  trackGameEvent(`partida-iniciada-${mode}`, true);
   loadLevel(i); showScreen("play"); keepAwake();
   S.sent = ""; sendPresence(true); // que la pareja se entere al instante
 }
@@ -2928,6 +2942,7 @@ function updateFishHud() {
 }
 function win() {
   S.won = true;
+  trackGameEvent(`nivel-completado-${S.mode === "online" ? "en-linea" : "solo"}-nivel-${S.lvl + 1}`, true);
   if (S.L.ball) S.L.ball.stop = true;
   const got = S.L.fish.filter((f) => f.got).length;
   store.best[S.lvl] = Math.max(store.best[S.lvl] || 0, got);
