@@ -1,5 +1,23 @@
 import { Peer } from "react-native-peer";
 
+// Igual que la web: STUN y el TURN de PeerJS, también por TCP, para VPN y redes estrictas,
+// más el TURN de Metered (por 443/TLS) que se descarga al abrir la sala.
+const TURN_API = "https://malunuka.metered.live/api/v1/turn/credentials?apiKey=788c94c4fed1bfeb0b8e0b89fe620a8c692e";
+let ICE_SERVERS: any[] = [
+  { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478"] },
+  { urls: ["turn:eu-0.turn.peerjs.com:3478", "turn:us-0.turn.peerjs.com:3478", "turn:eu-0.turn.peerjs.com:3478?transport=tcp", "turn:us-0.turn.peerjs.com:3478?transport=tcp"],
+    username: "peerjs", credential: "peerjsp" },
+];
+
+let turnLoad: Promise<void> | null = null;
+// si Metered no responde en 4 s se sigue sin él
+const loadTurn = () => turnLoad || (turnLoad = Promise.race([
+  new Promise<void>((ok) => setTimeout(ok, 4000)),
+  fetch(TURN_API).then((r) => r.json()).then((list) => {
+    if (Array.isArray(list) && list.length) ICE_SERVERS = ICE_SERVERS.concat(list);
+  }),
+]).catch(() => { turnLoad = null; }));
+
 export type Presence = Record<string, any>;
 type Listener = () => void;
 
@@ -26,11 +44,15 @@ export class OnlineRoom {
     this.onReady = onReady;
     this.onChange = onChange;
     this.onError = onError;
+    loadTurn().then(() => { if (!this.closed) this.open(); });
+  }
+
+  private open() {
     try {
       const PeerConstructor: any = Peer;
       this.peer = this.host
-        ? new PeerConstructor(`malu-y-nuka-sala-${this.code.toLowerCase()}`, { debug: 0 })
-        : new PeerConstructor(undefined, { debug: 0 });
+        ? new PeerConstructor(`malu-y-nuka-sala-${this.code.toLowerCase()}`, { debug: 0, config: { iceServers: ICE_SERVERS } })
+        : new PeerConstructor(undefined, { debug: 0, config: { iceServers: ICE_SERVERS } });
       this.peer.on("open", () => {
         if (this.closed) return;
         this.onReady();

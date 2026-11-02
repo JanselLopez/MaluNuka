@@ -3473,15 +3473,35 @@ function useClaudeRoom() {
 const SALA_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const newCode = () => Array.from({ length: 4 }, () => SALA_ABC[Math.floor(Math.random() * SALA_ABC.length)]).join("");
 const salaId = (code) => "malu-y-nuka-sala-" + code.toLowerCase();
+// STUN alcanza en casi todas las casas. Con VPN, redes de trabajo o escuela, o datos móviles con NAT estricto
+// la conexión directa no pasa y hace falta un TURN que reenvíe el tráfico; por TCP/TLS en el puerto 443 cruza casi cualquier firewall.
+// El TURN de PeerJS solo escucha en el 3478. Para uno propio (p. ej. Metered, plan gratis) pon en TURN_API la URL
+// que devuelve la lista de servidores: https://TU-APP.metered.live/api/v1/turn/credentials?apiKey=TU-CLAVE
+const TURN_API = "https://malunuka.metered.live/api/v1/turn/credentials?apiKey=788c94c4fed1bfeb0b8e0b89fe620a8c692e";
+let iceServers = [
+  { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478"] },
+  { urls: ["turn:eu-0.turn.peerjs.com:3478", "turn:us-0.turn.peerjs.com:3478", "turn:eu-0.turn.peerjs.com:3478?transport=tcp", "turn:us-0.turn.peerjs.com:3478?transport=tcp"],
+    username: "peerjs", credential: "peerjsp" },
+];
+let turnLoad = null;
+function loadTurn() {
+  if (!TURN_API) return Promise.resolve();
+  // sin TURN propio (o si tarda más de 4 s) igual se intenta con los demás
+  const wait = new Promise((ok) => setTimeout(ok, 4000));
+  return turnLoad || (turnLoad = Promise.race([wait, fetch(TURN_API).then((r) => r.json()).then((list) => {
+    if (Array.isArray(list) && list.length) iceServers = iceServers.concat(list);
+  })]).catch(() => { turnLoad = null; }));
+}
 let peerLib = null;
 function loadPeerJS() {
-  if (window.Peer) return Promise.resolve();
-  return peerLib || (peerLib = new Promise((ok, bad) => {
+  const turn = loadTurn();
+  if (window.Peer) return turn;
+  return Promise.all([turn, peerLib || (peerLib = new Promise((ok, bad) => {
     const s = document.createElement("script");
     s.src = "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js";
     s.onload = () => (window.Peer ? ok() : bad(new Error("peerjs"))); s.onerror = () => { peerLib = null; bad(new Error("peerjs")); };
     document.head.appendChild(s);
-  }));
+  }))]);
 }
 function codeRoom(code, host) {
   let peer = null, conn = null, mine = null, theirs = null, lastRecv = 0;
@@ -3497,12 +3517,18 @@ function codeRoom(code, host) {
   const attach = (c) => {
     if (conn && conn.open && c !== conn) { c.on("open", () => c.close()); return; } // una sola pareja por sala
     conn = c;
-    c.on("open", () => { room.lost = false; if (mine) c.send(mine); onPeersCb(); });
+    // si en 15 s no abre, la red no deja pasar la conexión directa: avisamos y quien se unió vuelve a intentar
+    setTimeout(() => {
+      if (conn !== c || c.open || peer.destroyed) return;
+      room.blocked = true; onPeersCb();
+      if (!host) room.retry(true);
+    }, 15000);
+    c.on("open", () => { room.lost = false; room.blocked = false; if (mine) c.send(mine); onPeersCb(); });
     c.on("data", (d) => { if (d && typeof d === "object") { theirs = d; lastRecv = performance.now(); onPeersCb(); } });
     c.on("close", () => { if (conn !== c) return; conn = null; theirs = null; room.lost = true; onPeersCb(); });
     c.on("error", () => {});
   };
-  peer = new Peer(host ? salaId(code) : undefined, { debug: 0 });
+  peer = new Peer(host ? salaId(code) : undefined, { debug: 0, config: { iceServers } });
   peer.on("open", () => { onConn(true); if (!host) attach(peer.connect(salaId(code), { serialization: "json", reliable: true })); });
   peer.on("connection", (c) => { if (host) attach(c); });
   peer.on("disconnected", () => { try { if (!peer.destroyed) peer.reconnect(); } catch (e) {} });
@@ -3537,7 +3563,7 @@ function pickRole(r) {
 }
 function roomErrText(e) {
   if (e === "peer-unavailable") return `No encontramos esa sala. Revisen el código o creen una nueva.`;
-  if (e === "lib" || e === "network" || e === "server-error" || e === "socket-error" || e === "socket-closed") return "No hay conexión con el servidor de salas. Revisen el internet e intenten de nuevo.";
+  if (e === "lib" || e === "network" || e === "server-error" || e === "socket-error" || e === "socket-closed") return "No hay conexión con el servidor de salas. Revisen el internet; si usan VPN, desactívenla e intenten de nuevo.";
   if (e === "browser-incompatible" || e === "webrtc") return "Este navegador no permite salas directas. Prueben con Chrome o Safari actualizados.";
   return "Algo falló con la sala. Intenten de nuevo.";
 }
@@ -3651,6 +3677,7 @@ function paintLobby() {
     else set("", "Creen una sala o únanse con un código.");
   } else if (S.roomState === "pending" || !S.connected) set("", "Conectando…");
   else if (!S.me) set(pr ? "on" : "", pr ? `Tu pareja ya está aquí${pr.r ? ` como ${P_NAME[pr.r]}` : ""}. Elige quién eres.` : "Elige quién eres");
+  else if (!pr && S.room && S.room.blocked) set("warn", "No logramos conectarlos. Si alguno usa VPN o la red del trabajo o la escuela, desactívenla o cambien a datos móviles. Seguimos intentando…");
   else if (!pr) set("", S.room && S.room.lost ? "Se cortó la conexión con tu pareja. Esperando que vuelva…" : S.salaHost ? `Sala lista. Pásale el código ${S.salaCode} a tu pareja.` : "Esperando a tu pareja…");
   else if (pr.r === S.me) set("warn", `Los dos eligieron a ${P_NAME[S.me]}. Uno tiene que cambiar.`);
   else if (!pr.r) set("on", "Tu pareja está aquí, falta que elija.");

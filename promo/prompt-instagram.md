@@ -52,12 +52,16 @@ Slide 4, el cierre. Título: "Rescaten a sus amigos". Una fila de jaulas grises 
 Malu y Nuka 🐧🐧
 Dos pingüinos, un iglú. Ninguno llega solo.
 
-Un juego de plataformas cooperativo para jugar de a dos, en la PC o en el celular: con el mismo teclado, en la misma pantalla o cada quien en la suya. 7 mundos, del pueblo a la avalancha, y amigos del Ártico esperando que los rescaten.
+Hice un juego de plataformas cooperativo para jugar de a dos, en la PC o en el celular: con el mismo teclado, en la misma pantalla o en línea, cada quien en la suya.
+
+🧊 7 mundos y 32 niveles, del pueblo a la avalancha
+🦭 7 parejas de animales del Ártico para rescatar
+🆓 Gratis y desde el navegador, sin instalar nada
 
 ¿Con quién lo jugarías? Etiquétalo 👇
 🎮 Link en la bio
 
-#juegoindie #indiegame #indiedev #gamedev #juegocooperativo #coop #videojuegos #juegosparados #pinguinos #juegosgratis
+#juegoindie #indiegame #juegocooperativo #videojuegos #gamedev
 ```
 
 ## Referencias
